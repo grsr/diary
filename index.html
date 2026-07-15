@@ -176,6 +176,26 @@ nav.tabs svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2
 details summary{cursor:pointer;font-weight:600;padding:6px 0}
 a{color:var(--accent2)}
 
+/* Catch-up banner */
+.banner{display:flex;align-items:center;gap:12px;background:linear-gradient(120deg,#7c6cff22,#a78bfa22);border:1px solid var(--accent);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.banner .cu-txt{flex:1;font-size:14px;line-height:1.35}
+.banner .cu-txt b{color:var(--accent2)}
+.banner .cu-btn{flex:none;background:var(--accent);color:#fff;border-radius:10px;padding:10px 14px;font-weight:700;font-size:13px}
+
+/* Bottom sheet modal */
+.modal{position:fixed;inset:0;z-index:80;background:#0009;display:none;align-items:flex-end;justify-content:center}
+.modal.show{display:flex}
+.sheet{background:var(--bg2);width:100%;max-width:640px;max-height:85vh;border-radius:20px 20px 0 0;
+  padding:18px 18px calc(24px + var(--safe-bot));overflow-y:auto;border:1px solid var(--line);border-bottom:none}
+.cu-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.cu-row:last-child{border-bottom:none}
+.cu-date{flex:1;font-weight:600;font-size:15px}
+.cu-date small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+.cu-actions{display:flex;gap:6px}
+.cu-a{padding:10px 12px;border-radius:9px;font-size:13px;font-weight:650;border:1px solid var(--line);background:var(--card2)}
+.cu-a.usual{background:var(--accent);color:#fff;border-color:var(--accent)}
+.cu-a.none{background:var(--ok);color:#08351f;border-color:var(--ok)}
+
 /* Print report */
 @media print{
   body{background:#fff;color:#000}
@@ -212,6 +232,8 @@ a{color:var(--accent2)}
         <div class="dlabel" id="dlabel">Today<small id="dlabel-sub"></small></div>
         <button class="nav" id="nextDay" aria-label="Next day">›</button>
       </div>
+
+      <div class="banner" id="catchupBanner" style="display:none"></div>
 
       <div class="card">
         <div class="field">
@@ -394,6 +416,43 @@ a{color:var(--accent2)}
       </div>
 
       <div class="card">
+        <h2>Your usual day</h2>
+        <p class="hint">New days start pre-filled with your typical headache, so most days are a one-tap save. You can change or clear it any time.</p>
+        <div class="field">
+          <div class="row">
+            <div><span class="label">Default new days to a headache</span><div class="sublabel">Your normal, all-day one</div></div>
+            <div class="switch" id="usualSw"></div>
+          </div>
+        </div>
+        <div class="field" id="usualDurField">
+          <span class="label">Usual duration</span>
+          <div class="chips" id="usualDurChips"></div>
+        </div>
+        <div class="field" id="usualSevField">
+          <span class="label">Usual severity (optional)</span>
+          <div class="chips" id="usualSevChips"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Apple Health</h2>
+        <p class="help">A web app can't read Apple Health directly (only native apps can) — but you can push data in with a quick <b>Shortcut</b> that reads last night's sleep and opens the diary with it already filled in.</p>
+        <details style="margin-top:6px">
+          <summary>Set up the “sleep from Health” Shortcut</summary>
+          <div class="help">
+            <ol>
+              <li>Open the <b>Shortcuts</b> app → <b>+</b> to create a new shortcut.</li>
+              <li>Add action <b>Find Health Samples</b> → type <b>Sleep Analysis</b>; set it to <b>Today</b> (or last night).</li>
+              <li>Add an action to total the hours asleep into a variable (e.g. <b>Calculate Statistics → Sum</b>, or use the sample’s duration).</li>
+              <li>Add <b>Open URLs</b> with: <code id="healthUrl">https://grsr.github.io/diary/?sleep=</code> then insert your hours variable right after the <code>=</code>.</li>
+              <li>Run it each morning — or attach it to a <b>Time of Day</b> Automation so your sleep is waiting for you.</li>
+            </ol>
+            <p>The diary also accepts <code>?date=YYYY-MM-DD</code> (defaults to today) and <code>?steps=</code> (ticks “exercise” if you were active). It fills the day in and saves automatically.</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
         <h2>What to track</h2>
         <div class="field">
           <div class="row">
@@ -443,6 +502,18 @@ a{color:var(--accent2)}
 <div class="toast" id="toast"></div>
 <div id="report-print"></div>
 
+<div class="modal" id="catchupModal">
+  <div class="sheet">
+    <div class="row" style="margin-bottom:6px">
+      <h2 style="margin:0">Catch up · <span id="cuCount">0</span> days</h2>
+      <button class="btn ghost" id="cuClose" style="padding:8px 14px">Done</button>
+    </div>
+    <p class="hint">Quickly log the days you missed. “Usual” fills in your normal headache.</p>
+    <button class="btn block" id="cuFillAll" style="margin-bottom:14px">Fill all with my usual headache</button>
+    <div id="cuList"></div>
+  </div>
+</div>
+
 <script>
 "use strict";
 /* ---------- storage ---------- */
@@ -452,7 +523,8 @@ const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
 let entries=load(DB_KEY,{});
 let settings=Object.assign({
   reminderTime:'20:30', trackMens:false,
-  customTriggers:[], customMeds:[], calMonth:null
+  customTriggers:[], customMeds:[], calMonth:null,
+  defaultUsual:true, usualDuration:'Most of the day', usualSeverity:null
 }, load(SET_KEY,{}));
 
 const DEFAULT_TRIGGERS=['Caffeine','Alcohol','Dehydrated','Skipped meal','Chocolate','Aged cheese','Poor sleep','Bright light','Screen time','Loud noise','Strong smell','Weather change','Travel','Neck/shoulder tension'];
@@ -471,7 +543,7 @@ const fmtShort=s=>parseISO(s).toLocaleDateString(undefined,{month:'short',day:'n
 /* ---------- state ---------- */
 let curDate=todayISO();
 let draft=null;          // working copy of current day's entry
-let saveTimer=null, dirty=false;
+let saveTimer=null, dirty=false, touched=false;
 
 function blank(date){return{date,migraine:false,severity:null,duration:null,aura:false,meds:[],
   sleepHours:null,sleepQuality:null,stress:null,triggers:[],water:null,mealsNote:'',
@@ -483,23 +555,33 @@ function hasContent(e){
     e.menstrual||e.notes;
 }
 
+function applyUsual(e){
+  if(settings.defaultUsual){
+    e.migraine=true;
+    e.duration=settings.usualDuration||'Most of the day';
+    if(settings.usualSeverity)e.severity=settings.usualSeverity;
+  }
+  return e;
+}
 function loadDay(date){
   curDate=date;
-  draft=entries[date]?JSON.parse(JSON.stringify(entries[date])):blank(date);
+  const existed=!!entries[date];
+  draft=existed?JSON.parse(JSON.stringify(entries[date])):applyUsual(blank(date));
+  touched=existed;          // prefilled-but-untouched days aren't saved until you engage
   dirty=false;
   renderToday();
 }
 
-function commit(now){
+function commit(){
   if(!draft)return;
-  if(hasContent(draft)){draft.updatedAt=todayISO();entries[curDate]=draft;}
-  else{delete entries[curDate];}
+  if(touched&&hasContent(draft)){draft.updatedAt=todayISO();entries[curDate]=draft;}
+  else{delete entries[curDate];}   // untouched prefill or cleared day → not stored
   save(DB_KEY,entries);
   dirty=false;
-  setSaveState('saved');
+  setSaveState(touched?'saved':'idle');
 }
 function scheduleSave(){
-  dirty=true;setSaveState('saving');
+  touched=true;dirty=true;setSaveState('saving');
   clearTimeout(saveTimer);
   saveTimer=setTimeout(()=>commit(),700);
 }
@@ -570,7 +652,71 @@ function renderToday(){
   document.getElementById('exSw').classList.toggle('on',draft.exercise);
   document.getElementById('mensField').style.display=settings.trackMens?'':'none';
   document.getElementById('mensSw').classList.toggle('on',draft.menstrual);
+  renderBanner();
 }
+
+/* ---------- missing days / catch-up ---------- */
+function missingDays(){
+  const keys=Object.keys(entries).sort();
+  if(!keys.length)return[];
+  const start=parseISO(keys[0]), today=parseISO(todayISO());
+  const out=[];
+  for(let d=new Date(start); d<today; d.setDate(d.getDate()+1)){
+    const iso=isoOf(d);
+    if(!entries[iso])out.push(iso);
+  }
+  return out;
+}
+function renderBanner(){
+  const b=document.getElementById('catchupBanner');
+  const m=missingDays();
+  if(!m.length){b.style.display='none';return;}
+  b.style.display='';
+  b.innerHTML=`<div class="cu-txt"><b>${m.length}</b> earlier day${m.length>1?'s':''} not logged yet.</div><button class="cu-btn">Catch up ›</button>`;
+  b.querySelector('.cu-btn').onclick=openCatchup;
+}
+function saveMissing(iso,usual){
+  const e=blank(iso);
+  if(usual){e.migraine=true;e.duration=settings.usualDuration||'Most of the day';if(settings.usualSeverity)e.severity=settings.usualSeverity;}
+  else{e.migraine=false;}   // explicitly logged as a no-headache day
+  e.updatedAt=todayISO();entries[iso]=e;save(DB_KEY,entries);
+}
+function openCatchup(){
+  renderCatchupList();
+  document.getElementById('catchupModal').classList.add('show');
+}
+function closeCatchup(){document.getElementById('catchupModal').classList.remove('show');}
+function renderCatchupList(){
+  const m=missingDays();
+  document.getElementById('cuCount').textContent=m.length;
+  const wrap=document.getElementById('cuList');wrap.innerHTML='';
+  m.slice().reverse().forEach(iso=>{
+    const row=document.createElement('div');row.className='cu-row';
+    const dow=parseISO(iso).toLocaleDateString(undefined,{weekday:'long'});
+    row.innerHTML=`<div class="cu-date">${fmtShort(iso)}<small>${dow}</small></div>
+      <div class="cu-actions">
+        <button class="cu-a usual">Usual</button>
+        <button class="cu-a none">None</button>
+        <button class="cu-a edit">Edit</button>
+      </div>`;
+    row.querySelector('.usual').onclick=()=>{saveMissing(iso,true);row.remove();afterCatchup();};
+    row.querySelector('.none').onclick=()=>{saveMissing(iso,false);row.remove();afterCatchup();};
+    row.querySelector('.edit').onclick=()=>{closeCatchup();loadDay(iso);switchTab('today');};
+    wrap.appendChild(row);
+  });
+}
+function afterCatchup(){
+  const m=missingDays();
+  document.getElementById('cuCount').textContent=m.length;
+  renderBanner();
+  if(!m.length){closeCatchup();toast('All caught up 🎉');}
+}
+document.getElementById('cuClose').onclick=closeCatchup;
+document.getElementById('cuFillAll').onclick=()=>{
+  const m=missingDays();if(!m.length){closeCatchup();return;}
+  m.forEach(iso=>saveMissing(iso,true));
+  renderBanner();closeCatchup();toast('Filled '+m.length+' day'+(m.length>1?'s':'')+' with your usual headache');
+};
 
 function faceScale(id,val,cb,stress){
   const el=document.getElementById(id);el.innerHTML='';
@@ -600,7 +746,7 @@ document.getElementById('mealsNote').oninput=e=>{draft.mealsNote=e.target.value;
 document.getElementById('notes').oninput=e=>{draft.notes=e.target.value;scheduleSave();};
 document.getElementById('prevDay').onclick=()=>{commit();const d=parseISO(curDate);d.setDate(d.getDate()-1);loadDay(isoOf(d));};
 document.getElementById('nextDay').onclick=()=>{if(curDate===todayISO())return;commit();const d=parseISO(curDate);d.setDate(d.getDate()+1);loadDay(isoOf(d));};
-document.getElementById('saveBtn').onclick=()=>{commit();toast('Saved for '+fmtShort(curDate));};
+document.getElementById('saveBtn').onclick=()=>{touched=true;commit();toast('Saved for '+fmtShort(curDate));};
 document.getElementById('clearDay').onclick=()=>{if(confirm('Clear all entries for this day?')){draft=blank(curDate);commit();renderToday();toast('Day cleared');}};
 
 /* ---------- HISTORY ---------- */
@@ -760,6 +906,13 @@ document.getElementById('importJson').onchange=e=>{
 function renderSettings(){
   document.getElementById('reminderTime').value=settings.reminderTime;
   document.getElementById('trackMensSw').classList.toggle('on',settings.trackMens);
+  // usual day
+  document.getElementById('usualSw').classList.toggle('on',settings.defaultUsual);
+  document.getElementById('usualDurField').style.display=settings.defaultUsual?'':'none';
+  document.getElementById('usualSevField').style.display=settings.defaultUsual?'':'none';
+  chipGroup('usualDurChips',DURATIONS,[settings.usualDuration],v=>{settings.usualDuration=v;save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();});
+  const sevOpts=['None','1','2','3','4','5','6','7','8','9','10'];
+  chipGroup('usualSevChips',sevOpts,[settings.usualSeverity?String(settings.usualSeverity):'None'],v=>{settings.usualSeverity=(v==='None'?null:+v);save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();});
   renderTagList('customTrigList',settings.customTriggers,i=>{settings.customTriggers.splice(i,1);save(SET_KEY,settings);renderSettings();});
   renderTagList('customMedList',settings.customMeds,i=>{settings.customMeds.splice(i,1);save(SET_KEY,settings);renderSettings();});
   document.getElementById('countLine').textContent=Object.keys(entries).length+' days stored on this device.';
@@ -773,6 +926,7 @@ function renderTagList(id,arr,onDel){
 }
 document.getElementById('reminderTime').onchange=e=>{settings.reminderTime=e.target.value;save(SET_KEY,settings);};
 document.getElementById('trackMensSw').onclick=()=>{settings.trackMens=!settings.trackMens;save(SET_KEY,settings);renderSettings();renderToday();};
+document.getElementById('usualSw').onclick=()=>{settings.defaultUsual=!settings.defaultUsual;save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();};
 document.getElementById('addTrig').onclick=()=>{const v=document.getElementById('newTrig').value.trim();if(v){settings.customTriggers.push(v);save(SET_KEY,settings);document.getElementById('newTrig').value='';renderSettings();}};
 document.getElementById('addMed').onclick=()=>{const v=document.getElementById('newMed').value.trim();if(v){settings.customMeds.push(v);save(SET_KEY,settings);document.getElementById('newMed').value='';renderSettings();}};
 document.getElementById('wipe').onclick=()=>{if(confirm('Delete ALL entries permanently? Consider downloading a backup first.')){if(confirm('Are you absolutely sure? This cannot be undone.')){entries={};save(DB_KEY,entries);loadDay(todayISO());renderAll();toast('All data deleted');}}};
@@ -821,6 +975,7 @@ function switchTab(tab){
   document.getElementById('hdr-title').textContent=TITLES[tab];
   document.getElementById('hdr-sub').textContent=tab==='today'?fmtLong(curDate):'';
   document.querySelector('.savebar').style.display=tab==='today'?'':'none';
+  if(tab==='today')renderBanner();
   if(tab==='history')renderHistory();
   if(tab==='report'){renderReportPreview();}
   if(tab==='settings')renderSettings();
@@ -830,9 +985,25 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>switchTab(
 
 function renderAll(){renderToday();renderHistory();renderSettings();}
 
+/* ---------- Apple Health / URL import ---------- */
+function importFromURL(){
+  const p=new URLSearchParams(location.search);
+  if(![...p.keys()].length)return;
+  const date=p.get('date')||todayISO();
+  loadDay(date);
+  const msgs=[];
+  if(p.has('sleep')){const h=parseFloat(p.get('sleep'));if(!isNaN(h)&&h>=0&&h<=24){draft.sleepHours=Math.round(h*2)/2;touched=true;msgs.push(draft.sleepHours+'h sleep');}}
+  if(p.has('steps')){const s=parseInt(p.get('steps'),10);if(!isNaN(s)){if(s>=5000)draft.exercise=true;touched=true;msgs.push(s.toLocaleString()+' steps');}}
+  if(touched){commit();renderToday();}
+  if(msgs.length)toast('Added from Health: '+msgs.join(', '));
+  history.replaceState(null,'',location.pathname);
+}
+
 /* ---------- boot ---------- */
 loadDay(todayISO());
+importFromURL();
 switchTab('today');
+renderBanner();
 checkReminder();
 window.addEventListener('beforeunload',()=>{if(dirty)commit();});
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&dirty)commit();

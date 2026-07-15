@@ -12,20 +12,20 @@ one-tap **doctor's report** you can save as a PDF.
 
 ---
 
-## 1. Turn on hosting (one-time, ~1 minute)
+## 1. Hosting — automatic
 
-The app files live in this repo. To make it a live URL:
+Every push to `main` runs a GitHub Actions workflow (`.github/workflows/deploy.yml`)
+that turns on GitHub Pages (first time only) and publishes the site. You don't
+need to touch any settings. After the first push, wait ~1–2 minutes and the app
+is live at:
 
-1. Go to the repo on GitHub → **Settings** → **Pages** (left sidebar).
-2. Under **Build and deployment → Source**, choose **Deploy from a branch**.
-3. Set **Branch** to `main` and folder to **`/ (root)`**, then **Save**.
-4. Wait ~1 minute, then reload the page. GitHub will show your live URL:
+```
+https://grsr.github.io/diary/
+```
 
-   ```
-   https://grsr.github.io/diary/
-   ```
-
-That's it — the app is live.
+You can watch progress on the repo's **Actions** tab. (If your account has Actions
+disabled, enable **Settings → Actions → Allow all actions**, or set
+**Settings → Pages → Deploy from a branch → `main` / root** as a manual fallback.)
 
 ## 2. Install it on your iPhone (makes it feel like an app)
 
@@ -54,6 +54,30 @@ app gives you two reliable, native options. Open the app's **Settings** tab:
 opened that day.)
 
 ---
+
+## Your usual day + catching up
+
+Because an all-day headache is the norm, new days start **pre-filled with your
+usual headache** — so a typical day is a single tap on **Save**. Had a good day?
+Just tap **No**. Adjust the default (duration/severity, or turn it off) under
+**Settings → Your usual day**.
+
+If you miss a day, the **Today** tab shows a "**N earlier days not logged**"
+banner. Tap **Catch up** to fill them fast: **Fill all with my usual headache**,
+or per day choose **Usual / None / Edit**.
+
+## Apple Health (sleep) via a Shortcut
+
+Web apps can't read Apple Health directly, but you can push data in. Build a
+Shortcut that reads **Sleep Analysis** from Health and opens the diary with it:
+
+```
+https://grsr.github.io/diary/?sleep=<hours>
+```
+
+The app fills that day's sleep in and saves automatically, then cleans the URL.
+It also accepts `?date=YYYY-MM-DD` and `?steps=<count>` (ticks "exercise" if you
+were active). Step-by-step setup is in **Settings → Apple Health**.
 
 ## What it tracks
 
