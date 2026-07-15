@@ -249,7 +249,7 @@ a{color:var(--accent2)}
             <div class="sevwrap scale sev" id="sevScale"></div>
           </div>
           <div class="field">
-            <span class="label">How long did it last?</span>
+            <span class="label">Headache pattern</span>
             <div class="chips" id="durChips"></div>
           </div>
           <div class="field">
@@ -258,15 +258,11 @@ a{color:var(--accent2)}
               <div class="switch" id="auraSw"></div>
             </div>
           </div>
-          <div class="field">
-            <span class="label">Medication taken</span>
-            <div class="chips" id="medChips"></div>
-          </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>Sleep</h2>
+        <h2>Last night</h2>
         <div class="field">
           <div class="row">
             <span class="label">Hours slept</span>
@@ -280,6 +276,14 @@ a{color:var(--accent2)}
         <div class="field">
           <span class="label">Sleep quality</span>
           <div class="scale faces" id="sleepQ"></div>
+        </div>
+        <div class="field">
+          <span class="label">Amitriptyline</span>
+          <div class="chips" id="amiChips"></div>
+        </div>
+        <div class="field">
+          <span class="label">Zopiclone</span>
+          <div class="chips" id="zopChips"></div>
         </div>
       </div>
 
@@ -433,6 +437,11 @@ a{color:var(--accent2)}
           <span class="label">Usual severity (optional)</span>
           <div class="chips" id="usualSevChips"></div>
         </div>
+        <div class="field">
+          <span class="label">Usual amitriptyline dose (last night)</span>
+          <div class="sublabel" style="margin-bottom:10px">New days default to this. Lower it as you taper.</div>
+          <div class="chips" id="usualAmiChips"></div>
+        </div>
       </div>
 
       <div class="card">
@@ -452,15 +461,6 @@ a{color:var(--accent2)}
         <div class="row" style="margin-top:12px;gap:8px">
           <input type="text" id="newTrig" placeholder="e.g. wine, thunderstorm…">
           <button class="btn" id="addTrig" style="padding:13px 18px">Add</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Custom medications</h2>
-        <div class="chips" id="customMedList"></div>
-        <div class="row" style="margin-top:12px;gap:8px">
-          <input type="text" id="newMed" placeholder="e.g. sumatriptan…">
-          <button class="btn" id="addMed" style="padding:13px 18px">Add</button>
         </div>
       </div>
 
@@ -506,13 +506,18 @@ const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
 let entries=load(DB_KEY,{});
 let settings=Object.assign({
   reminderTime:'20:30', trackMens:false,
-  customTriggers:[], customMeds:[], calMonth:null,
-  defaultUsual:true, usualDuration:'Most of the day', usualSeverity:null
+  customTriggers:[], calMonth:null,
+  defaultUsual:true, usualDuration:'All day', usualSeverity:null,
+  usualAmitriptyline:100
 }, load(SET_KEY,{}));
 
 const DEFAULT_TRIGGERS=['Caffeine','Alcohol','Dehydrated','Skipped meal','Chocolate','Aged cheese','Poor sleep','Bright light','Screen time','Loud noise','Strong smell','Weather change','Travel','Neck/shoulder tension'];
-const DEFAULT_MEDS=['Ibuprofen','Paracetamol','Aspirin','Triptan','Anti-nausea'];
-const DURATIONS=['< 1 hr','1–4 hrs','4–12 hrs','Most of the day','> 1 day'];
+const ZOP_OPTS=[{v:'half',l:'½ tablet'},{v:'one',l:'1 tablet'}];
+const zopLabel=v=>v==='half'?'½ tablet':v==='one'?'1 tablet':'';
+const AMI_OPTS=[100,75,50,25];
+const DURATIONS=['All day','Came on later in the day'];
+// migrate any older stored duration default to the new options
+if(!DURATIONS.includes(settings.usualDuration))settings.usualDuration='All day';
 const FACE=['😣','😕','😐','🙂','😄'];
 
 /* ---------- date helpers ---------- */
@@ -528,22 +533,23 @@ let curDate=todayISO();
 let draft=null;          // working copy of current day's entry
 let saveTimer=null, dirty=false, touched=false;
 
-function blank(date){return{date,migraine:false,severity:null,duration:null,aura:false,meds:[],
-  sleepHours:null,sleepQuality:null,stress:null,triggers:[],water:null,mealsNote:'',
+function blank(date){return{date,migraine:false,severity:null,duration:null,aura:false,
+  sleepHours:null,sleepQuality:null,amitriptyline:null,zopiclone:null,stress:null,triggers:[],water:null,mealsNote:'',
   exercise:false,menstrual:false,notes:''};}
 
 function hasContent(e){
-  return e.migraine||e.severity||e.duration||e.aura||e.meds.length||e.sleepHours!=null||
-    e.sleepQuality||e.stress||e.triggers.length||e.water!=null||e.mealsNote||e.exercise||
+  return e.migraine||e.severity||e.duration||e.aura||e.sleepHours!=null||
+    e.sleepQuality||e.amitriptyline||e.zopiclone||e.stress||e.triggers.length||e.water!=null||e.mealsNote||e.exercise||
     e.menstrual||e.notes;
 }
 
 function applyUsual(e){
   if(settings.defaultUsual){
     e.migraine=true;
-    e.duration=settings.usualDuration||'Most of the day';
+    e.duration=settings.usualDuration||'All day';
     if(settings.usualSeverity)e.severity=settings.usualSeverity;
   }
+  if(settings.usualAmitriptyline)e.amitriptyline=settings.usualAmitriptyline;  // nightly, independent of headache
   return e;
 }
 function loadDay(date){
@@ -609,13 +615,13 @@ function renderToday(){
   // aura
   document.getElementById('auraSw').classList.toggle('on',draft.aura);
 
-  // meds
-  const meds=[...DEFAULT_MEDS,...settings.customMeds];
-  chipGroup('medChips',meds,draft.meds,v=>{toggleArr(draft.meds,v);scheduleSave();renderToday();});
-
   // sleep
   document.getElementById('sleepVal').innerHTML=(draft.sleepHours!=null?draft.sleepHours:'–')+'<small> hrs</small>';
   faceScale('sleepQ',draft.sleepQuality,v=>{draft.sleepQuality=(draft.sleepQuality===v?null:v);scheduleSave();renderToday();});
+
+  // night-before meds (single-select, tap again to clear)
+  singleChips('amiChips',AMI_OPTS.map(v=>({v,l:v+' mg'})),draft.amitriptyline,v=>{draft.amitriptyline=(draft.amitriptyline===v?null:v);scheduleSave();renderToday();});
+  singleChips('zopChips',ZOP_OPTS,draft.zopiclone,v=>{draft.zopiclone=(draft.zopiclone===v?null:v);scheduleSave();renderToday();});
 
   // stress
   faceScale('stressScale',draft.stress,v=>{draft.stress=(draft.stress===v?null:v);scheduleSave();renderToday();},true);
@@ -713,10 +719,16 @@ function chipGroup(id,opts,selected,cb,single){
     b.textContent=o;b.onclick=()=>cb(o);el.appendChild(b);});
 }
 function toggleArr(arr,v){const i=arr.indexOf(v);i<0?arr.push(v):arr.splice(i,1);}
+// single-select chips: opts = [{v,l}], current = selected value
+function singleChips(id,opts,current,cb){
+  const el=document.getElementById(id);el.innerHTML='';
+  opts.forEach(o=>{const b=document.createElement('button');b.className='chip'+(current===o.v?' on':'');
+    b.textContent=o.l;b.onclick=()=>cb(o.v);el.appendChild(b);});
+}
 
 /* ---------- TODAY events ---------- */
 document.querySelectorAll('#migSeg button').forEach(b=>b.onclick=()=>{
-  draft.migraine=!!(+b.dataset.v);if(!draft.migraine){draft.severity=null;draft.duration=null;draft.aura=false;draft.meds=[];}
+  draft.migraine=!!(+b.dataset.v);if(!draft.migraine){draft.severity=null;draft.duration=null;draft.aura=false;}
   scheduleSave();renderToday();});
 document.getElementById('auraSw').onclick=()=>{draft.aura=!draft.aura;scheduleSave();renderToday();};
 document.getElementById('exSw').onclick=()=>{draft.exercise=!draft.exercise;scheduleSave();renderToday();};
@@ -789,9 +801,10 @@ function computeStats(keys){
   const topTrig=Object.entries(trigCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const sleepMig=avg(migs.map(k=>entries[k].sleepHours).filter(v=>v!=null));
   const sleepNon=avg(keys.filter(k=>!entries[k].migraine).map(k=>entries[k].sleepHours).filter(v=>v!=null));
-  const withMed={};migs.forEach(k=>entries[k].meds.forEach(m=>withMed[m]=(withMed[m]||0)+1));
+  const amiCounts={};keys.forEach(k=>{const a=entries[k].amitriptyline;if(a)amiCounts[a]=(amiCounts[a]||0)+1;});
+  const zopNights=keys.filter(k=>entries[k].zopiclone).length;
   return{count:keys.length,migDays:migs.length,avgSev,topTrig,sleepMig,sleepNon,
-    meds:Object.entries(withMed).sort((a,b)=>b[1]-a[1])};
+    amiCounts:Object.entries(amiCounts).sort((a,b)=>b[0]-a[0]),zopNights};
 }
 const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
 const r1=x=>x==null?'—':(Math.round(x*10)/10);
@@ -818,7 +831,8 @@ function buildReportHTML(){
     <td>${e.severity||''}</td>
     <td>${e.duration||''}</td>
     <td>${e.aura?'Yes':''}</td>
-    <td>${(e.meds||[]).join(', ')}</td>
+    <td>${e.amitriptyline?e.amitriptyline+' mg':''}</td>
+    <td>${zopLabel(e.zopiclone)}</td>
     <td>${e.sleepHours??''}</td>
     <td>${e.sleepQuality?e.sleepQuality+'/5':''}</td>
     <td>${e.stress?e.stress+'/5':''}</td>
@@ -838,9 +852,10 @@ function buildReportHTML(){
       <div><b>${s.migDays&&s.count?Math.round(s.migDays/s.count*100):0}%</b>of logged days</div>
     </div>
     ${s.topTrig.length?`<p><b>Most common factors on migraine days:</b> ${s.topTrig.map(t=>`${t[0]} (${t[1]})`).join(', ')}</p>`:''}
-    ${s.meds.length?`<p><b>Medications used:</b> ${s.meds.map(m=>`${m[0]} (${m[1]})`).join(', ')}</p>`:''}
+    ${s.amiCounts.length?`<p><b>Amitriptyline (nights at each dose):</b> ${s.amiCounts.map(m=>`${m[0]} mg × ${m[1]}`).join(', ')}</p>`:''}
+    ${s.zopNights?`<p><b>Zopiclone taken:</b> ${s.zopNights} night${s.zopNights>1?'s':''}</p>`:''}
     <table><thead><tr>
-      <th>Date</th><th>Migraine</th><th>Sev</th><th>Duration</th><th>Aura</th><th>Meds</th>
+      <th>Date</th><th>Headache</th><th>Sev</th><th>Pattern</th><th>Aura</th><th>Amitript.</th><th>Zopiclone</th>
       <th>Sleep h</th><th>Sleep Q</th><th>Stress</th><th>Triggers</th><th>Water</th><th>Exercise</th>
       ${settings.trackMens?'<th>Period</th>':''}<th>Notes</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
@@ -857,10 +872,11 @@ document.getElementById('genReport').onclick=()=>{
 
 /* CSV */
 function toCSV(){
-  const cols=['date','migraine','severity','duration','aura','meds','sleepHours','sleepQuality','stress','triggers','water','exercise',...(settings.trackMens?['menstrual']:[]),'mealsNote','notes'];
+  const cols=['date','migraine','severity','duration','aura','amitriptyline','zopiclone','sleepHours','sleepQuality','stress','triggers','water','exercise',...(settings.trackMens?['menstrual']:[]),'mealsNote','notes'];
   const esc=v=>{v=(v==null?'':Array.isArray(v)?v.join('; '):v)+'';return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const cell=(k,c)=>{let v=entries[k][c];if(c==='zopiclone')v=zopLabel(v);else if(c==='amitriptyline'&&v)v=v+' mg';return esc(v);};
   const keys=Object.keys(entries).sort();
-  return cols.join(',')+'\n'+keys.map(k=>cols.map(c=>esc(entries[k][c])).join(',')).join('\n');
+  return cols.join(',')+'\n'+keys.map(k=>cols.map(c=>cell(k,c)).join(',')).join('\n');
 }
 function download(name,text,type){
   const blob=new Blob([text],{type:type||'text/plain'});const url=URL.createObjectURL(blob);
@@ -896,8 +912,9 @@ function renderSettings(){
   chipGroup('usualDurChips',DURATIONS,[settings.usualDuration],v=>{settings.usualDuration=v;save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();});
   const sevOpts=['None','1','2','3','4','5','6','7','8','9','10'];
   chipGroup('usualSevChips',sevOpts,[settings.usualSeverity?String(settings.usualSeverity):'None'],v=>{settings.usualSeverity=(v==='None'?null:+v);save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();});
+  const amiOpts=['None','100','75','50','25'];
+  chipGroup('usualAmiChips',amiOpts,[settings.usualAmitriptyline?String(settings.usualAmitriptyline):'None'],v=>{settings.usualAmitriptyline=(v==='None'?null:+v);save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();});
   renderTagList('customTrigList',settings.customTriggers,i=>{settings.customTriggers.splice(i,1);save(SET_KEY,settings);renderSettings();});
-  renderTagList('customMedList',settings.customMeds,i=>{settings.customMeds.splice(i,1);save(SET_KEY,settings);renderSettings();});
   document.getElementById('countLine').textContent=Object.keys(entries).length+' days stored on this device.';
   const nr=document.getElementById('enableNotif');
   if(('Notification'in window)&&Notification.permission==='granted'){nr.textContent='Notifications on ✓';nr.disabled=true;}
@@ -911,7 +928,6 @@ document.getElementById('reminderTime').onchange=e=>{settings.reminderTime=e.tar
 document.getElementById('trackMensSw').onclick=()=>{settings.trackMens=!settings.trackMens;save(SET_KEY,settings);renderSettings();renderToday();};
 document.getElementById('usualSw').onclick=()=>{settings.defaultUsual=!settings.defaultUsual;save(SET_KEY,settings);if(!entries[curDate])loadDay(curDate);renderSettings();};
 document.getElementById('addTrig').onclick=()=>{const v=document.getElementById('newTrig').value.trim();if(v){settings.customTriggers.push(v);save(SET_KEY,settings);document.getElementById('newTrig').value='';renderSettings();}};
-document.getElementById('addMed').onclick=()=>{const v=document.getElementById('newMed').value.trim();if(v){settings.customMeds.push(v);save(SET_KEY,settings);document.getElementById('newMed').value='';renderSettings();}};
 document.getElementById('wipe').onclick=()=>{if(confirm('Delete ALL entries permanently? Consider downloading a backup first.')){if(confirm('Are you absolutely sure? This cannot be undone.')){entries={};save(DB_KEY,entries);loadDay(todayISO());renderAll();toast('All data deleted');}}};
 
 /* reminder .ics */
