@@ -68,19 +68,6 @@ If you miss a day, the **Today** tab shows a "**N earlier days not logged**"
 banner. Tap **Catch up** to fill them fast: **Fill all with my usual headache**,
 or per day choose **Usual / None / Edit**.
 
-## Apple Health (sleep) via a Shortcut
-
-Web apps can't read Apple Health directly, but you can push data in. Build a
-Shortcut that reads **Sleep Analysis** from Health and opens the diary with it:
-
-```
-https://grsr.github.io/diary/?sleep=<hours>
-```
-
-The app fills that day's sleep in and saves automatically, then cleans the URL.
-It also accepts `?date=YYYY-MM-DD` and `?steps=<count>` (ticks "exercise" if you
-were active). Step-by-step setup is in **Settings → Apple Health**.
-
 ## What it tracks
 
 Each day: whether you had a migraine, severity (1–10), duration, aura, medication

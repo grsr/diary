@@ -436,24 +436,6 @@ a{color:var(--accent2)}
       </div>
 
       <div class="card">
-        <h2>Apple Health</h2>
-        <p class="help">A web app can't read Apple Health directly (only native apps can) — but you can push data in with a quick <b>Shortcut</b> that reads last night's sleep and opens the diary with it already filled in.</p>
-        <details style="margin-top:6px">
-          <summary>Set up the “sleep from Health” Shortcut</summary>
-          <div class="help">
-            <ol>
-              <li>Open the <b>Shortcuts</b> app → <b>+</b> to create a new shortcut.</li>
-              <li>Add action <b>Find Health Samples</b> → type <b>Sleep Analysis</b>; set it to <b>Today</b> (or last night).</li>
-              <li>Add an action to total the hours asleep into a variable (e.g. <b>Calculate Statistics → Sum</b>, or use the sample’s duration).</li>
-              <li>Add <b>Open URLs</b> with: <code id="healthUrl">https://grsr.github.io/diary/?sleep=</code> then insert your hours variable right after the <code>=</code>.</li>
-              <li>Run it each morning — or attach it to a <b>Time of Day</b> Automation so your sleep is waiting for you.</li>
-            </ol>
-            <p>The diary also accepts <code>?date=YYYY-MM-DD</code> (defaults to today) and <code>?steps=</code> (ticks “exercise” if you were active). It fills the day in and saves automatically.</p>
-          </div>
-        </details>
-      </div>
-
-      <div class="card">
         <h2>What to track</h2>
         <div class="field">
           <div class="row">
@@ -986,23 +968,8 @@ document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>switchTab(
 
 function renderAll(){renderToday();renderHistory();renderSettings();}
 
-/* ---------- Apple Health / URL import ---------- */
-function importFromURL(){
-  const p=new URLSearchParams(location.search);
-  if(![...p.keys()].length)return;
-  const date=p.get('date')||todayISO();
-  loadDay(date);
-  const msgs=[];
-  if(p.has('sleep')){const h=parseFloat(p.get('sleep'));if(!isNaN(h)&&h>=0&&h<=24){draft.sleepHours=Math.round(h*2)/2;touched=true;msgs.push(draft.sleepHours+'h sleep');}}
-  if(p.has('steps')){const s=parseInt(p.get('steps'),10);if(!isNaN(s)){if(s>=5000)draft.exercise=true;touched=true;msgs.push(s.toLocaleString()+' steps');}}
-  if(touched){commit();renderToday();}
-  if(msgs.length)toast('Added from Health: '+msgs.join(', '));
-  history.replaceState(null,'',location.pathname);
-}
-
 /* ---------- boot ---------- */
 loadDay(todayISO());
-importFromURL();
 switchTab('today');
 renderBanner();
 checkReminder();
