@@ -47,8 +47,10 @@ app gives you two reliable, native options. Open the app's **Settings** tab:
   repeating daily alert.
 - **Most flexible — Shortcuts automation:** in the iOS **Shortcuts** app →
   **Automation** → **+** → **Time of Day** → pick your evening time, **Daily**,
-  “Run Immediately” → action **Open App → Migraine Diary**. Now your phone opens
-  the diary for you every evening.
+  **Run Immediately** → add the **Open URLs** action and enter
+  `https://grsr.github.io/diary/`. (Use **Open URLs**, *not* “Open App” —
+  installed web apps don’t appear in the Open App list.) Now your phone opens the
+  diary for you every evening.
 
 (There's also an in-app notification toggle that fires while the app has been
 opened that day.)
