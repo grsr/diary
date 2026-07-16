@@ -22,10 +22,22 @@
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(#5bb4d6,#0a1a24);}
   canvas{display:block;touch-action:none;}
+  #nameov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:10;}
+  #nameov .card{background:#1d2a26;border:3px solid #ffd23f;border-radius:18px;padding:22px 26px;text-align:center;}
+  #nameov .ttl{color:#ffd23f;font-weight:800;font-size:20px;margin-bottom:12px;}
+  #nameinput{font-size:20px;padding:11px 12px;border-radius:12px;border:2px solid #ffd23f;background:#0f1a17;color:#fff;text-align:center;width:190px;text-transform:uppercase;outline:none;}
+  #namebtn{margin-top:14px;font-size:18px;font-weight:800;padding:11px 30px;border:none;border-radius:12px;background:#ffd23f;color:#7a3d16;}
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
+<div id="nameov">
+  <div class="card">
+    <div class="ttl">New High Score! 🌭</div>
+    <input id="nameinput" maxlength="10" placeholder="YOUR NAME" autocomplete="off" autocorrect="off" autocapitalize="characters">
+    <br><button id="namebtn">Save</button>
+  </div>
+</div>
 <script>
 "use strict";
 /* ============================================================================
@@ -96,7 +108,7 @@ const game = {
   best: +(localStorage.getItem('sausageBest') || 0),
   coins: 0,                       // mini-sausages banked this run
   camX: 0, shake: 0, t: 0, timer: 0,
-  armed: false, panMsg: 0, arena: false, hint: 0, diedInBoss: false,
+  armed: false, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1,
 };
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
@@ -108,6 +120,32 @@ function saveProgress(){ try { localStorage.setItem('sausageSave', JSON.stringif
 function loadProgress(){ try { return JSON.parse(localStorage.getItem('sausageSave') || 'null'); } catch(_){ return null; } }
 function clearProgress(){ try { localStorage.removeItem('sausageSave'); } catch(_){} }
 function hasSave(){ const s = loadProgress(); return s && s.level > 1; }
+
+/* ---------- Local high-scores table (top 10 on this device) ---------- */
+function getScores(){ try { return JSON.parse(localStorage.getItem('sausageScores')||'[]'); } catch(_){ return []; } }
+function setScores(a){ try { localStorage.setItem('sausageScores', JSON.stringify(a)); } catch(_){} }
+function getName(){ return localStorage.getItem('sausageName') || ''; }
+let pendingScore = 0;
+function recordGameOver(){
+  game.newIdx = -1;
+  const scores = getScores();
+  const qualifies = game.score > 0 && (scores.length < 10 || game.score > scores[scores.length-1].score);
+  if (qualifies){
+    pendingScore = game.score;
+    const ov = document.getElementById('nameov'), inp = document.getElementById('nameinput');
+    inp.value = getName(); ov.style.display = 'flex'; setTimeout(()=>inp.focus(), 60);
+  }
+}
+function commitName(){
+  const inp = document.getElementById('nameinput');
+  let n = (inp.value||'YOU').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim().slice(0,10) || 'YOU';
+  try { localStorage.setItem('sausageName', n); } catch(_){}
+  const scores = getScores(); scores.push({ name:n, score:pendingScore });
+  scores.sort((a,b)=>b.score-a.score); const top = scores.slice(0,10);
+  game.newIdx = top.findIndex(s=>s.name===n && s.score===pendingScore);
+  setScores(top);
+  document.getElementById('nameov').style.display = 'none';
+}
 
 /* ============================================================================
    INPUT  —  tap a treetop to grab; second finger climbs; shake pumps.
@@ -329,7 +367,7 @@ function genLevel(n){
 /* ============================================================================
    LIFECYCLE
    ========================================================================== */
-function startRun(){ clearProgress(); runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
+function startRun(){ clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
 function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
 function loadLevel(n){
@@ -361,6 +399,7 @@ function loseLife(reason){
   if (game.lives <= 0){
     game.state = S.OVER; game.timer = 0; clearProgress();
     if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
+    recordGameOver();
   } else { game.state = S.DYING; game.timer = 40; }
 }
 
@@ -926,11 +965,14 @@ function drawOverlays(){
       cta('TAP TO PLAY',VH*0.82);
       if(game.best>0){ ctx.fillStyle='#eaf6ef'; ctx.font='bold 18px system-ui'; ctx.fillText('Best: '+game.best+' levels',VW/2,VH*0.89); }
     }
+    const hs=getScores(); if(hs.length){ ctx.textAlign='center'; ctx.fillStyle='#ffd27a'; ctx.font='bold 15px system-ui'; ctx.fillText('🏆 Top: '+String(hs[0].name).slice(0,10)+' — '+hs[0].score, VW/2, VH*0.95); }
   } else if(game.state===S.OVER){
-    panel(); title('GAME OVER',VH*0.34);
-    ctx.fillStyle='#fff'; ctx.font='bold 30px system-ui'; ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'),VW/2,VH*0.46);
-    ctx.fillStyle='#ffe27a'; ctx.font='bold 20px system-ui'; ctx.fillText('Best: '+game.best,VW/2,VH*0.52);
-    cta('TAP TO TRY AGAIN',VH*0.68);
+    panel(); title('GAME OVER',VH*0.16);
+    ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 24px system-ui';
+    ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'),VW/2,VH*0.25);
+    ctx.fillStyle='#ffd23f'; ctx.font='bold 20px system-ui'; ctx.fillText('🏆 HIGH SCORES',VW/2,VH*0.33);
+    drawScoreList(VH*0.38, 8);
+    cta('TAP TO TRY AGAIN',VH*0.88);
   } else if(game.state===S.CLEAR){
     ctx.fillStyle='#1e5631'; ctx.font='bold 40px system-ui'; ctx.strokeStyle='#fff'; ctx.lineWidth=5;
     ctx.strokeText('LEVEL '+game.level+' CLEAR!',VW/2,VH*0.35); ctx.fillText('LEVEL '+game.level+' CLEAR!',VW/2,VH*0.35);
@@ -941,6 +983,18 @@ function drawOverlays(){
     ctx.fillStyle='rgba(120,20,10,0.25)'; ctx.fillRect(0,0,VW,VH); ctx.fillStyle='#fff'; ctx.font='bold 30px system-ui'; ctx.fillText('Ouch! Lives left: '+game.lives,VW/2,VH*0.4);
   }
   ctx.restore();
+}
+function drawScoreList(y0, count){
+  const scores = getScores(), lh = 27;
+  if(scores.length===0){ ctx.textAlign='center'; ctx.fillStyle='#aeb8b4'; ctx.font='16px system-ui'; ctx.fillText('No scores yet — be the first!', VW/2, y0+10); return; }
+  for(let i=0;i<Math.min(count,scores.length);i++){
+    const s=scores[i], y=y0+i*lh, hi=(i===game.newIdx);
+    if(hi){ ctx.fillStyle='rgba(255,210,63,0.18)'; roundRect(VW/2-135, y-18, 270, 24, 6); ctx.fill(); }
+    ctx.fillStyle = hi ? '#ffd23f' : '#eaf6ef'; ctx.font = (hi?'bold ':'')+'18px system-ui';
+    ctx.textAlign='left';  ctx.fillText((i+1)+'.', VW/2-128, y); ctx.fillText(String(s.name).slice(0,10), VW/2-104, y);
+    ctx.textAlign='right'; ctx.fillText(String(s.score), VW/2+128, y);
+  }
+  ctx.textAlign='center';
 }
 function panel(){ ctx.fillStyle='rgba(16,30,26,0.74)'; ctx.fillRect(0,0,VW,VH); }
 function title(txt,y){ ctx.fillStyle='#ffd23f'; ctx.font='bold 42px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=6; ctx.lineJoin='round'; ctx.strokeText(txt,VW/2,y); ctx.fillText(txt,VW/2,y); }
@@ -962,6 +1016,10 @@ clouds=makeClouds(); level=genLevel(1); anchors=level.anchors; trees=level.trees
 monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; floatTexts=[];
 player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,face:'happy',legPh:0,r:15,onGround:true};
 requestAnimationFrame(frame);
+// High-score name entry.
+document.getElementById('namebtn').addEventListener('click', commitName);
+document.getElementById('nameinput').addEventListener('keydown', e => { if (e.key === 'Enter') commitName(); });
+
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
 
 

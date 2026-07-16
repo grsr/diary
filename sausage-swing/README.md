@@ -31,6 +31,15 @@ rope, and **P** does a swing pump (stands in for shaking).
   level. Run out and it's game over (your best score is saved on the device).
 - **Progress is saved** at the start of every level, so you can close the app
   and pick up where you left off — the menu shows a **Continue** button.
+- **High scores** are kept on the device (top 10, with names). Beat one and you
+  get to enter your name; the game-over screen shows the ranked table.
+
+## Levels
+
+Levels are **procedurally generated**, not hand-built — effectively endless and
+ramping in difficulty. A per-run seed means every new game lays out differently
+(a death-retry within a run reproduces the same level, to stay fair). Each level
+also picks a randomized height "shape" so the treetops climb, dip, or zig-zag.
 - **Mini-sausages** 🌭 are scattered along the way like coins. Grab them — each
   one becomes a **monkey helper** in the next boss fight (up to 6).
 - **Every 3rd level is a boss level.** A 🍳 **frying pan** floats on the path —
