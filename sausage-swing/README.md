@@ -71,13 +71,16 @@ also picks a randomized height "shape" so the treetops climb, dip, or zig-zag.
 - **Moving vines** (from level 6) drift side-to-side.
 - **Gusty wind** (from level 8) nudges you through the air.
 - **Coconut trees** drop coconuts as you pass under them.
-- **Golden invincibility banana** — grab it for a few seconds of invincibility
-  (glow around the sausage); great for getting past a tricky bit.
+- **Golden invincibility banana** — grab it for ~8 seconds of *true*
+  invincibility (glow around the sausage): nothing can hurt you, and if you fall
+  into the ravine you float back up instead of dying. Great for a tricky bit.
 - **Gorilla boss** (every 3rd level): rolling barrels + coconut rain, and it
   gets tougher (more HP, faster/heavier attacks) each boss. You can't slip
   behind it, and you can only hurt it by **swinging into it** (walking/jumping
-  does nothing). The frying pan makes swing-hits do double damage but **breaks
-  after 2**, and each monkey helper lobs **one** banana then scurries off.
+  does nothing) — grab a vine, swing in, and keep chipping while you dodge. The
+  frying pan makes swing-hits do double damage but **breaks after 2**, and each
+  monkey helper lobs **one** banana then scurries off. Dying re-fights only the
+  boss and **keeps the damage you've done**, so you can wear it down.
 
 ## Difficulty
 

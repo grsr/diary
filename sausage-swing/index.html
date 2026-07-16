@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v13';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v14';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -110,7 +110,7 @@ const game = {
   coins: 0,                       // mini-sausages banked this run
   camX: 0, shake: 0, t: 0, timer: 0,
   armed: false, panUses: 0, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false, paused: false,
-  rank: null, party: (localStorage.getItem('sausageParty')==='on'), eggTaps: 0, partyMsg: 0,
+  rank: null, party: (localStorage.getItem('sausageParty')==='on'), eggTaps: 0, partyMsg: 0, bossHP: 0,
 };
 const LBBTN = { x:34, y:VH-48, r:26 };     // in-play "view leaderboard" button (bottom-left)
 const MUTEBTN = { x:VW-34, y:VH-48, r:24 }; // music mute toggle (bottom-right, menu + play)
@@ -493,7 +493,7 @@ function loadLevel(n){
   bananas = []; particles = []; coconuts = []; floatTexts = []; boss = null;
   clouds = clouds || makeClouds();
   game.armed = false; game.camX = 0; game.state = S.PLAY; game.timer = 0; game.panMsg = 0;
-  game.arena = false; game.hint = n === 1 ? 260 : 0; game.paused = false;
+  game.arena = false; game.hint = n === 1 ? 260 : 0; game.paused = false; game.bossHP = 0;
   grappleId = null; pointers.clear(); pointerBtn.clear(); recomputeBtns();
   player = { x:CLIFF_W-40, y:CLIFF_TOP-STAND_DY, vx:0, vy:0, mode:'stand',
              ax:0, ay:0, L:0, curA:null, iframe:0, invuln:0, face:'happy', legPh:0, r:15, onGround:true };
@@ -507,7 +507,7 @@ function nextLevel(){
 }
 function loseLife(reason){
   if (game.state !== S.PLAY && game.state !== S.BOSS) return;
-  if (player.invuln > 0 && reason !== 'fall') return;   // invincible: shrug off hazards (but not falling)
+  if (player.invuln > 0) return;   // truly invincible: shrug off EVERYTHING, including falls
   game.diedInBoss = (game.state === S.BOSS);   // a boss hit re-fights only the boss
   game.lives--; game.shake = 16;
   spawnSplat(player.x, player.y, reason==='banana'?'#ffd23f':'#c86b3a');
@@ -617,8 +617,14 @@ function step(){
   // Invincibility bananas.
   if (p.invuln > 0) p.invuln--;
   for (const g of powerups){ if (g.got) continue; g.bob += 0.09;
-    if (Math.hypot(g.x-p.x, g.y-p.y) < 32){ g.got=true; p.invuln = 360; blip(700,0.1); blip(1000,0.12);
-      spawnText(g.x, g.y-14, 'INVINCIBLE!', '#ffe27a'); for(let i=0;i<14;i++) spawnSpark(g.x,g.y,'#ffe27a'); } }
+    if (Math.hypot(g.x-p.x, g.y-p.y) < 34){ g.got=true; p.invuln = 480; blip(700,0.1); blip(1000,0.12);
+      spawnText(g.x, g.y-14, 'INVINCIBLE!', '#ffe27a'); for(let i=0;i<16;i++) spawnSpark(g.x,g.y,'#ffe27a'); } }
+  // While invincible you can't fall to your death: if you drop into the ravine
+  // you gently float back up so you can grab a vine again.
+  if (p.invuln > 0){
+    if (p.mode === 'fly' && p.y > CLIFF_TOP){ p.vy -= G*1.5; if (p.vy > 3) p.vy = 3; }
+    if (p.y > VH-34){ p.y = VH-34; if (p.vy > 0) p.vy = 0; if (p.mode==='fly') p.vy = -6; }
+  }
 
   // Monkeys throw bananas / get whacked.
   for (const m of monkeys){ if (!m.alive) continue;
@@ -698,16 +704,17 @@ const BOSS_STAND = BOSS_FLOOR - STAND_DY;   // player's feet-on-floor y
 function enterBoss(){
   game.state = S.BOSS; game.arena = true; game.camX = 0; game.timer = 0;
   const tier = level.n / 3;                       // 1,2,3...
-  const hp = 6 + (tier-1)*5;                       // scales up steeply each boss
+  const maxFull = 5 + (tier-1)*5;                  // scales up steeply each boss
+  const hp = game.bossHP > 0 ? game.bossHP : maxFull;   // resume damage across retries
   boss = {
-    g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:hp, tier, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
+    g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:maxFull, tier, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
     helpers: [], barrels: [], cocos: [], fban: [], intro: 160,
   };
   const helperN = Math.min(game.coins, HELPER_CAP);
   for (let i=0;i<helperN;i++) boss.helpers.push({ x:22+i*26, y:BOSS_FLOOR, cd:40+i*16, bob:i, gone:false });
   // Swingable vines — the right one is positioned so a good swing carries you
   // into the gorilla. All kept left of it (you can't get behind).
-  anchors = [ {x:VW*0.24, y:150}, {x:VW*0.42, y:120}, {x:VW*0.58, y:120}, {x:VW*0.72, y:145} ];
+  anchors = [ {x:VW*0.26, y:150}, {x:VW*0.44, y:118}, {x:VW*0.60, y:116}, {x:VW*0.77, y:140} ];
   bananas = []; coconuts = []; particles = []; floatTexts = [];
   game.panUses = game.armed ? 2 : 0;              // pan breaks after 2 whacks
   player.x = 60; player.y = BOSS_STAND; player.vx=0; player.vy=0; player.mode='stand'; player.onGround=true; player.curA=null; player.iframe=60;
@@ -750,19 +757,16 @@ function updateBoss(){
   g.anim += 0.05;
 
   if (b.intro <= 0 && g.hp > 0){
-    // Hit the gorilla: walk/jump into it with the pan, or bop its head if you
-    // missed the pan. Either way you get knocked back so you re-approach.
-    // You can only hurt the gorilla by SWINGING into it at speed — walking or
-    // jumping into it does nothing (no more head-camping).
+    // Damage the gorilla by SWINGING into it (not jumping). Big, forgiving
+    // radius around it, and you keep swinging — so a good swing chips it each
+    // pass. Grab a vine, swing in, and keep at it while you dodge its attacks.
     if (g.iframe<=0 && p.mode==='swing'){
       const spd = Math.hypot(p.vx, p.vy);
-      const hit = spd > 5 && Math.abs(p.x-g.x) < 52 && p.y > g.y-120 && p.y < g.y+10;
+      const hit = spd > 2.2 && Math.hypot(p.x-g.x, p.y-(g.y-50)) < 84;
       if (hit){
         const withPan = game.armed && game.panUses > 0;
-        g.hp -= withPan ? 2 : 1; g.iframe=24; g.hurt=18; game.shake=14; blip(320,0.09,'square');
-        spawnText(g.x, g.y-96, withPan?'WHACK! −2':'KICK! −1', '#fff'); for(let i=0;i<14;i++) spawnSpark(g.x,g.y-50,'#ffe27a');
-        p.mode='fly'; grappleId=null;                       // let go and bounce off
-        p.vx = Math.sign(p.x-g.x||-1)*8; p.vy = -6; p.onGround=false; p.iframe=14;
+        g.hp -= withPan ? 2 : 1; g.iframe=22; g.hurt=16; game.shake=12; blip(320,0.09,'square');
+        spawnText(g.x, g.y-96, withPan?'WHACK! −2':'KICK! −1', '#fff'); for(let i=0;i<12;i++) spawnSpark(g.x,g.y-50,'#ffe27a');
         if (withPan && --game.panUses <= 0){ game.armed=false; spawnText(p.x, p.y-40, 'PAN BROKE!', '#e6b0a0'); blip(120,0.2,'sawtooth'); }
       }
     }
@@ -801,8 +805,10 @@ function updateBoss(){
   b.fban = b.fban.filter(f=>!f.dead);
 
   updateParticles();
+  game.bossHP = Math.max(0, g.hp);   // remember progress across retries
 
   if (game.state === S.BOSS && g.hp <= 0){
+    game.bossHP = 0;
     game.state = S.BOSSWIN; game.timer = 90; game.shake = 20;
     blip(700,0.15); blip(900,0.18); blip(1200,0.25);
     for (let i=0;i<40;i++) spawnSpark(g.x, g.y-40, '#ffe27a');
@@ -1296,6 +1302,7 @@ document.getElementById('nameinput').addEventListener('keydown', e => { if (e.ke
 if (!getName()) openNick();   // ask once on first ever launch
 
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+
 
 
 
