@@ -33,7 +33,7 @@
 <div id="wrap"><canvas id="c"></canvas></div>
 <div id="nameov">
   <div class="card">
-    <div class="ttl">New High Score! 🌭</div>
+    <div class="ttl">Your nickname 🌭</div>
     <input id="nameinput" maxlength="10" placeholder="YOUR NAME" autocomplete="off" autocorrect="off" autocapitalize="characters">
     <br><button id="namebtn">Save</button>
   </div>
@@ -125,26 +125,26 @@ function hasSave(){ const s = loadProgress(); return s && s.level > 1; }
 function getScores(){ try { return JSON.parse(localStorage.getItem('sausageScores')||'[]'); } catch(_){ return []; } }
 function setScores(a){ try { localStorage.setItem('sausageScores', JSON.stringify(a)); } catch(_){} }
 function getName(){ return localStorage.getItem('sausageName') || ''; }
-let pendingScore = 0;
+// Score is recorded automatically under the stored nickname — no prompt needed.
 function recordGameOver(){
   game.newIdx = -1;
+  if (game.score <= 0) return;
   const scores = getScores();
-  const qualifies = game.score > 0 && (scores.length < 10 || game.score > scores[scores.length-1].score);
-  if (qualifies){
-    pendingScore = game.score;
-    const ov = document.getElementById('nameov'), inp = document.getElementById('nameinput');
-    inp.value = getName(); ov.style.display = 'flex'; setTimeout(()=>inp.focus(), 60);
-  }
-}
-function commitName(){
-  const inp = document.getElementById('nameinput');
-  let n = (inp.value||'YOU').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim().slice(0,10) || 'YOU';
-  try { localStorage.setItem('sausageName', n); } catch(_){}
-  const scores = getScores(); scores.push({ name:n, score:pendingScore });
-  scores.sort((a,b)=>b.score-a.score); const top = scores.slice(0,10);
-  game.newIdx = top.findIndex(s=>s.name===n && s.score===pendingScore);
+  if (scores.length >= 10 && game.score <= scores[scores.length-1].score) return;
+  const n = getName() || 'YOU';
+  scores.push({ name:n, score:game.score });
+  scores.sort((a,b)=>b.score-a.score);
+  const top = scores.slice(0,10);
+  game.newIdx = top.findIndex(s=>s.name===n && s.score===game.score);
   setScores(top);
-  document.getElementById('nameov').style.display = 'none';
+}
+// The nickname popup — shown once on first launch, or when you tap to change it.
+function openNick(){ const ov=document.getElementById('nameov'), inp=document.getElementById('nameinput'); inp.value=getName(); ov.style.display='flex'; setTimeout(()=>inp.focus(),60); }
+function commitName(){
+  const inp=document.getElementById('nameinput');
+  const n=(inp.value||'PLAYER').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim().slice(0,10) || 'PLAYER';
+  try{ localStorage.setItem('sausageName', n); }catch(_){}
+  document.getElementById('nameov').style.display='none';
 }
 
 /* ============================================================================
@@ -204,6 +204,8 @@ function bossPress(id, cx, cy){
 function bossJump(){ if (player.onGround){ player.vy = -JUMP_V; player.onGround=false; player.mode='fly'; blip(500,0.05); } }
 function menuTap(cx, cy){
   const v = toScreen(cx, cy);
+  // Tap the nickname line to change it.
+  if (v.y > VH*0.945-18 && v.y < VH*0.945+14 && Math.abs(v.x-VW/2) < 160){ openNick(); return; }
   // "New game" pill sits just below the main button when a save exists.
   if (hasSave() && v.y > VH*0.855-20 && v.y < VH*0.855+22 && Math.abs(v.x-VW/2) < 95){ clearProgress(); startRun(); return; }
   if (hasSave()) continueRun(); else startRun();
@@ -965,7 +967,9 @@ function drawOverlays(){
       cta('TAP TO PLAY',VH*0.82);
       if(game.best>0){ ctx.fillStyle='#eaf6ef'; ctx.font='bold 18px system-ui'; ctx.fillText('Best: '+game.best+' levels',VW/2,VH*0.89); }
     }
-    const hs=getScores(); if(hs.length){ ctx.textAlign='center'; ctx.fillStyle='#ffd27a'; ctx.font='bold 15px system-ui'; ctx.fillText('🏆 Top: '+String(hs[0].name).slice(0,10)+' — '+hs[0].score, VW/2, VH*0.95); }
+    // nickname (tap to change)
+    ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='bold 15px system-ui';
+    ctx.fillText('👤 '+(getName()||'tap to set your name')+'   ✎', VW/2, VH*0.945);
   } else if(game.state===S.OVER){
     panel(); title('GAME OVER',VH*0.16);
     ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 24px system-ui';
@@ -1016,9 +1020,10 @@ clouds=makeClouds(); level=genLevel(1); anchors=level.anchors; trees=level.trees
 monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; floatTexts=[];
 player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,face:'happy',legPh:0,r:15,onGround:true};
 requestAnimationFrame(frame);
-// High-score name entry.
+// Nickname entry.
 document.getElementById('namebtn').addEventListener('click', commitName);
 document.getElementById('nameinput').addEventListener('keydown', e => { if (e.key === 'Enter') commitName(); });
+if (!getName()) openNick();   // ask once on first ever launch
 
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
 
