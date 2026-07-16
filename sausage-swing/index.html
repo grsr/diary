@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v20';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v21';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -107,12 +107,17 @@ const BG          = 0.6;   // boss: gravity (snappy platforming)
 // difficulty ramp (dmul feeds the level generator), how hard the boss hits, and
 // how fast things fall. Medium is the original balance.
 const DIFFS = {
-  easy:   { name:'Easy',   lives:7, dmul:0.72, bossHpMul:0.65, bossRateMul:1.40, fallMul:0.82 },
-  medium: { name:'Medium', lives:5, dmul:1.00, bossHpMul:1.00, bossRateMul:1.00, fallMul:1.00 },
-  hard:   { name:'Hard',   lives:3, dmul:1.32, bossHpMul:1.35, bossRateMul:0.72, fallMul:1.28 },
+  easy:       { name:'Easy',       lives:9, dmul:0.48, bossHpMul:0.45, bossRateMul:1.75, fallMul:0.66 },
+  medium:     { name:'Medium',     lives:5, dmul:1.00, bossHpMul:1.00, bossRateMul:1.00, fallMul:1.00 },
+  hard:       { name:'Hard',       lives:3, dmul:1.32, bossHpMul:1.35, bossRateMul:0.72, fallMul:1.28 },
+  // Can't die and can't fall — for fun/practice. Kept OFF the leaderboard.
+  invincible: { name:'Invincible', lives:99, dmul:0.62, bossHpMul:0.6, bossRateMul:1.5, fallMul:0.8, godmode:true, noBoard:true },
 };
-const MODE_ORDER = ['easy','medium','hard'];
+const MODE_ORDER = ['easy','medium','hard','invincible'];
 function dcfg(){ return DIFFS[game.mode] || DIFFS.medium; }
+// True when nothing can hurt the sausage — the golden-banana power-up, or the
+// Invincible difficulty mode.
+function invincible(){ return !!(player && player.invuln > 0) || dcfg().godmode; }
 // The leaderboard table only has name/score, so we tag the mode onto the name as
 // a "~X" suffix (X = E/M/H; '~' can't appear in a sanitised name) and split it
 // back out for display. Local scores just carry a .mode field.
@@ -145,10 +150,11 @@ const MENU_SHOP = { x:Math.round(VW*0.70), y:Math.round(VH*0.895), w:150, h:38 }
 const SHOPG = { x0:18, y0:Math.round(VH*0.30), cw:(VW-46)/2, ch:56, gap:8 };       // shop item grid
 function shopCellRect(i){ const col=i%2, row=(i/2)|0; return { x:SHOPG.x0+col*(SHOPG.cw+10), y:SHOPG.y0+row*(SHOPG.ch+SHOPG.gap), w:SHOPG.cw, h:SHOPG.ch }; }
 const SHOPBACK = { x:VW/2, y:VH-38, w:200, h:40 };
-const MODE_BTN = {                              // menu difficulty selector (a row of three)
-  easy:   { x:Math.round(VW*0.19), y:Math.round(VH*0.69), w:130, h:40 },
-  medium: { x:Math.round(VW*0.50), y:Math.round(VH*0.69), w:130, h:40 },
-  hard:   { x:Math.round(VW*0.81), y:Math.round(VH*0.69), w:130, h:40 },
+const MODE_BTN = {                              // menu difficulty selector (2×2 grid)
+  easy:       { x:Math.round(VW*0.28), y:Math.round(VH*0.672), w:150, h:34 },
+  medium:     { x:Math.round(VW*0.72), y:Math.round(VH*0.672), w:150, h:34 },
+  hard:       { x:Math.round(VW*0.28), y:Math.round(VH*0.722), w:150, h:34 },
+  invincible: { x:Math.round(VW*0.72), y:Math.round(VH*0.722), w:150, h:34 },
 };
 function hitRect(v, r){ return Math.abs(v.x-r.x) < r.w/2 && Math.abs(v.y-r.y) < r.h/2; }
 const LBBTN = { x:34, y:VH-48, r:26 };     // in-play "view leaderboard" button (bottom-left)
@@ -227,7 +233,7 @@ function fetchRank(score){
 }
 
 /* ---------- Saved progress (resume at the level you reached) ---------- */
-function saveProgress(){ try { localStorage.setItem('sausageSave', JSON.stringify({ level:game.level, score:game.score, lives:game.lives, coins:game.coins, seed:runSeed })); } catch(_){} }
+function saveProgress(){ try { localStorage.setItem('sausageSave', JSON.stringify({ level:game.level, score:game.score, lives:game.lives, coins:game.coins, seed:runSeed, mode:game.mode })); } catch(_){} }
 function loadProgress(){ try { return JSON.parse(localStorage.getItem('sausageSave') || 'null'); } catch(_){ return null; } }
 function clearProgress(){ try { localStorage.removeItem('sausageSave'); } catch(_){} }
 function hasSave(){ const s = loadProgress(); return s && s.level > 1; }
@@ -348,7 +354,7 @@ function menuTap(cx, cy){
   if (hitRect(v, MENU_LB)){ game.viewBoard=true; fetchBoard(); return; }        // leaderboard
   if (hitRect(v, MENU_SHOP)){ game.state=S.SHOP; game.shopMsg=0; blip(760,0.06); return; }  // shop
   for (const m of MODE_ORDER){ if (hitRect(v, MODE_BTN[m])){ setMode(m); return; } }         // difficulty
-  if (v.y > VH*0.66 && v.y < VH*0.72) return;    // don't start a game by tapping the difficulty row's gaps
+  if (v.y > VH*0.635 && v.y < VH*0.745) return;  // don't start a game by tapping the difficulty grid's gaps
   if (hasSave()) continueRun(); else startRun();
 }
 function setMode(m){ if (!DIFFS[m]) return; game.mode = m; try { localStorage.setItem('sausageMode', m); } catch(_){} blip(720,0.06); }
@@ -642,7 +648,7 @@ function startRun(fromLevel){
   clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.rank=null; game.viewBoard=false;
   runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = L; game.lives = dcfg().lives; game.score = L - 1; game.coins = 0; loadLevel(L);
 }
-function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
+function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; if (s.mode && DIFFS[s.mode]) game.mode = s.mode; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
 function loadLevel(n){
   game.level = n;
@@ -666,7 +672,7 @@ function nextLevel(){
 }
 function loseLife(reason){
   if (game.state !== S.PLAY && game.state !== S.BOSS) return;
-  if (player.invuln > 0) return;   // truly invincible: shrug off EVERYTHING, including falls
+  if (invincible()) return;   // truly invincible: shrug off EVERYTHING, including falls
   game.diedInBoss = (game.state === S.BOSS);   // a boss hit re-fights only the boss
   game.lives--; game.shake = 16;
   spawnSplat(player.x, player.y, reason==='zap'?'#fff36b':reason==='banana'?'#ffd23f':'#c86b3a');
@@ -674,8 +680,10 @@ function loseLife(reason){
   if (game.lives <= 0){
     game.state = S.OVER; game.timer = 0; clearProgress();
     if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
-    recordGameOver();                                   // local table
-    submitScore(getName(), game.score, game.mode).then(()=>{ fetchBoard(); fetchRank(game.score); }); // online + rank
+    if (!dcfg().noBoard){                               // Invincible runs stay off every board
+      recordGameOver();                                 // local table
+      submitScore(getName(), game.score, game.mode).then(()=>{ fetchBoard(); fetchRank(game.score); }); // online + rank
+    } else { game.newIdx = -1; game.rank = null; }
   } else { game.state = S.DYING; game.timer = 40; }
 }
 
@@ -786,7 +794,7 @@ function step(){
       spawnText(g.x, g.y-14, 'INVINCIBLE!', '#ffe27a'); for(let i=0;i<16;i++) spawnSpark(g.x,g.y,'#ffe27a'); } }
   // While invincible you can't fall to your death: if you drop into the ravine
   // you gently float back up so you can grab a vine again.
-  if (p.invuln > 0){
+  if (invincible()){
     if (p.mode === 'fly' && p.y > CLIFF_TOP){ p.vy -= G*1.5; if (p.vy > 3) p.vy = 3; }
     if (p.y > VH-34){ p.y = VH-34; if (p.vy > 0) p.vy = 0; if (p.mode==='fly') p.vy = -6; }
   }
@@ -1297,9 +1305,12 @@ function drawPlayer(p){
   if(p.mode==='swing'){ ctx.strokeStyle='#efe6c8'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(p.ax,p.ay); ctx.lineTo(p.x,p.y-6); ctx.stroke(); }
   let ang = p.mode==='swing' ? Math.atan2(p.y-p.ay,p.x-p.ax)-Math.PI/2 : p.mode==='fly' ? Math.atan2(p.vy,p.vx) : 0;
   ctx.save(); ctx.translate(p.x,p.y);
-  // Invincibility aura (flashes as it's about to run out).
-  if(p.invuln>0 && (p.invuln>90 || Math.floor(game.t/4)%2===0)){
-    const gr=ctx.createRadialGradient(0,0,10,0,0,42); gr.addColorStop(0,'rgba(255,230,120,0.55)'); gr.addColorStop(1,'rgba(255,230,120,0)');
+  // Invincibility aura — flashes as the banana runs out; steady in Invincible mode.
+  const auraBanana = p.invuln>0 && (p.invuln>90 || Math.floor(game.t/4)%2===0);
+  const auraMode = dcfg().godmode && p.invuln<=0;
+  if(auraBanana || auraMode){
+    const a = auraMode ? 0.34+Math.sin(game.t*0.12)*0.08 : 0.55;
+    const gr=ctx.createRadialGradient(0,0,10,0,0,42); gr.addColorStop(0,'rgba(255,230,120,'+a+')'); gr.addColorStop(1,'rgba(255,230,120,0)');
     ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(0,0,42,0,6.29); ctx.fill();
   }
   if(p.iframe>0 && p.invuln<=0 && Math.floor(game.t/4)%2===0) ctx.globalAlpha=0.5;
@@ -1662,10 +1673,16 @@ function drawPoison(x,y){ ctx.save(); ctx.translate(x,y);
 
 /* ---------- HUD ---------- */
 function drawHUD(){
-  // lives (mini sausages) — up to the current mode's max (never fewer than you hold)
-  const maxLives = Math.max(dcfg().lives, game.lives);
-  for(let i=0;i<maxLives;i++){ const x=20+i*23,y=32; ctx.globalAlpha=i<game.lives?1:0.22; ctx.save(); ctx.translate(x,y); ctx.scale(0.42,0.42);
-    ctx.fillStyle='#e0824a'; ctx.strokeStyle='#a4531f'; ctx.lineWidth=4; capsulePath(0,0,15,40); ctx.fill(); ctx.stroke(); drawFace(0,-8,'happy'); ctx.restore(); ctx.globalAlpha=1; }
+  // lives (mini sausages) — or an ∞ shield in Invincible mode
+  if(dcfg().godmode){
+    ctx.save(); ctx.translate(24,32); ctx.scale(0.42,0.42);
+    ctx.fillStyle='#e0824a'; ctx.strokeStyle='#a4531f'; ctx.lineWidth=4; capsulePath(0,0,15,40); ctx.fill(); ctx.stroke(); drawFace(0,-8,'happy'); ctx.restore();
+    ctx.fillStyle='#ffe27a'; ctx.font='bold 22px system-ui'; ctx.textAlign='left'; ctx.fillText('∞', 38, 40);
+  } else {
+    const maxLives = Math.min(Math.max(dcfg().lives, game.lives), 10);
+    for(let i=0;i<maxLives;i++){ const x=20+i*23,y=32; ctx.globalAlpha=i<game.lives?1:0.22; ctx.save(); ctx.translate(x,y); ctx.scale(0.42,0.42);
+      ctx.fillStyle='#e0824a'; ctx.strokeStyle='#a4531f'; ctx.lineWidth=4; capsulePath(0,0,15,40); ctx.fill(); ctx.stroke(); drawFace(0,-8,'happy'); ctx.restore(); ctx.globalAlpha=1; }
+  }
   // level + score
   ctx.fillStyle='#1e3a2e'; ctx.textAlign='right'; ctx.font='bold 26px system-ui'; ctx.fillText('LVL '+game.level,VW-16,34);
   ctx.font='bold 15px system-ui'; ctx.fillStyle='#2a4a3a'; ctx.fillText('Cleared: '+game.score+'   Best: '+game.best,VW-16,55);
@@ -1823,15 +1840,16 @@ function drawMuteBtn(){
   ctx.fillStyle='rgba(16,30,26,0.4)'; ctx.beginPath(); ctx.arc(MUTEBTN.x,MUTEBTN.y,MUTEBTN.r,0,6.29); ctx.fill();
   ctx.font='20px system-ui'; ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.fillText(musicOn?'🔊':'🔇', MUTEBTN.x, MUTEBTN.y+7);
 }
-// Difficulty selector row on the menu.
+// Difficulty selector (2×2 grid) on the menu.
 function drawModeSelector(){
   ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='bold 14px system-ui';
-  ctx.fillText('Difficulty — '+dcfg().lives+' lives', VW/2, VH*0.655);
-  for(const m of MODE_ORDER){ const b=MODE_BTN[m], on=game.mode===m;
-    ctx.fillStyle = on ? '#ffd23f' : 'rgba(255,255,255,0.14)';
+  const note = dcfg().godmode ? '∞ lives — not on the leaderboard' : 'Difficulty — '+dcfg().lives+' lives';
+  ctx.fillText(note, VW/2, VH*0.645);
+  for(const m of MODE_ORDER){ const b=MODE_BTN[m], on=game.mode===m, inv=(m==='invincible');
+    ctx.fillStyle = on ? (inv?'#8fe0a0':'#ffd23f') : 'rgba(255,255,255,0.14)';
     roundRect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12); ctx.fill();
     if(on){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; roundRect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12); ctx.stroke(); }
-    ctx.fillStyle = on ? '#7a3d16' : '#eaf6ef'; ctx.font='bold 17px system-ui'; ctx.fillText(DIFFS[m].name, b.x, b.y+6);
+    ctx.fillStyle = on ? '#173a24' : '#eaf6ef'; ctx.font='bold 16px system-ui'; ctx.fillText(inv?'⭐ Invincible':DIFFS[m].name, b.x, b.y+5);
   }
 }
 /* ---------- Costume shop screen ---------- */
