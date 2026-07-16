@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v16';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v17';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -219,7 +219,7 @@ function onDown(e){
     if (Math.hypot(v.x-MUTEBTN.x, v.y-MUTEBTN.y) <= MUTEBTN.r){ toggleMusic(); return; }
   }
   if (game.state === S.MENU){ if (game.viewBoard){ game.viewBoard=false; return; } menuTap(e.clientX, e.clientY); return; }
-  if (game.state === S.OVER){ startRun(); return; }
+  if (game.state === S.OVER){ startRun(zoneStart(zoneOf(game.level))); return; }
   if (game.state === S.BOSS){ bossPress(e.pointerId, e.clientX, e.clientY); return; }
   if (game.state !== S.PLAY) return;
 
@@ -291,7 +291,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp'){
     startAudio();
     if (game.state === S.MENU){ e.preventDefault(); hasSave() ? continueRun() : startRun(); return; }
-    if (game.state === S.OVER){ e.preventDefault(); startRun(); return; }
+    if (game.state === S.OVER){ e.preventDefault(); startRun(zoneStart(zoneOf(game.level))); return; }
     if (game.state === S.BOSS){ e.preventDefault(); bossJump(); return; }
     if (e.code === 'Space' && player && player.mode !== 'swing'){
       e.preventDefault(); const a = findNearestReachable(); if (a){ if (a.live && player.invuln<=0){ zapDeath(a); } else { attach(a); grappleId = 'kbd'; } }
@@ -406,6 +406,7 @@ const ZONE_NAMES = ['Jungle', 'City', 'Mineshaft'];
 function zoneOf(n){ return n < 10 ? 0 : n < 20 ? 1 : 2; }
 function zoneLevel(n){ const z = zoneOf(n); return n - (z===0 ? 0 : z===1 ? 9 : 19); }  // 1..10
 function diffOf(n){ return zoneLevel(n) + zoneOf(n)*0.5; }   // effective difficulty
+function zoneStart(z){ return z===0 ? 1 : z===1 ? 10 : 20; } // first level of a zone (respawn point)
 
 /* ============================================================================
    LEVEL GENERATION
@@ -547,7 +548,13 @@ function genLevel(n){
 /* ============================================================================
    LIFECYCLE
    ========================================================================== */
-function startRun(){ clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.rank=null; game.viewBoard=false; runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
+// A fresh run. Pass a level to start from (used on game over: you respawn at the
+// start of the zone you died in, not all the way back in the Jungle).
+function startRun(fromLevel){
+  const L = (fromLevel && fromLevel > 1) ? fromLevel : 1;
+  clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.rank=null; game.viewBoard=false;
+  runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = L; game.lives = START_LIVES; game.score = L - 1; game.coins = 0; loadLevel(L);
+}
 function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
 function loadLevel(n){
@@ -1475,6 +1482,7 @@ function drawOverlays(){
     }
     ctx.fillStyle='#ffd23f'; ctx.font='bold 18px system-ui'; ctx.fillText(SUPA_ON?'🏆 LEADERBOARD':'🏆 HIGH SCORES',VW/2,VH*0.31);
     drawBoard(VH*0.355, 8);
+    { const rz = zoneOf(game.level); if (rz > 0){ const ze=['🌴','🏙️','⛏️'][rz]||''; ctx.fillStyle='#8fe0a0'; ctx.font='bold 16px system-ui'; ctx.fillText('You\'ll restart in the '+ZONE_NAMES[rz]+' '+ze, VW/2, VH*0.85); } }
     cta('TAP TO TRY AGAIN',VH*0.9);
   } else if(game.state===S.CLEAR){
     ctx.fillStyle='#1e5631'; ctx.font='bold 40px system-ui'; ctx.strokeStyle='#fff'; ctx.lineWidth=5;
