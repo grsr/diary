@@ -27,10 +27,15 @@ rope, and **P** does a swing pump (stands in for shaking).
 ## The rules
 
 - **Score** = how many levels you clear.
-- **5 lives.** Getting hit or falling costs a life and restarts the current
-  level. Run out and it's **game over** — but you **respawn at the start of the
-  zone you died in**, not all the way back in the Jungle (die in the City and you
-  restart at level 10). Your best score is saved on the device.
+- **Difficulty modes** (pick on the menu): **Easy / Medium / Hard**. They change
+  how many **lives** you start with (7 / 5 / 3), how fast the levels ramp up, how
+  quickly hazards move and fall, and how tough the bosses are (fewer HP and slower
+  attacks on Easy, more HP and faster attacks on Hard). Medium is the classic
+  balance. Your choice is saved and applies to your next new game.
+- Getting hit or falling costs a life and restarts the current level. Run out and
+  it's **game over** — but you **respawn at the start of the zone you died in**,
+  not all the way back in the Jungle (die in the City and you restart at level
+  10). Your best score is saved on the device.
 - **Progress is saved** at the start of every level, so you can close the app
   and pick up where you left off — the menu shows a **Continue** button.
 - **Nickname + leaderboard.** The game asks for a nickname once (stored on the
@@ -43,7 +48,7 @@ rope, and **P** does a swing pump (stands in for shaking).
   the online leaderboard.
 - **Music**: a looping chiptune plays while you play (a spookier one for boss
   fights). Toggle it with the 🔊/🔇 button on the menu or in-play.
-- **Version number** is shown in the corner of the menu (currently **v18**), so
+- **Version number** is shown in the corner of the menu (currently **v19**), so
   you can confirm you're on the latest build. Opening the game with an internet
   connection always loads the newest version.
 - **Gold coins** (stamped with a sausage) are scattered across every zone and

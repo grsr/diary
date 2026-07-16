@@ -97,10 +97,22 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v18';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v19';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
+
+/* ---------- Difficulty modes ---------- */
+// One dial per mode scales the whole game: more/less lives, a gentler/steeper
+// difficulty ramp (dmul feeds the level generator), how hard the boss hits, and
+// how fast things fall. Medium is the original balance.
+const DIFFS = {
+  easy:   { name:'Easy',   lives:7, dmul:0.72, bossHpMul:0.65, bossRateMul:1.40, fallMul:0.82 },
+  medium: { name:'Medium', lives:5, dmul:1.00, bossHpMul:1.00, bossRateMul:1.00, fallMul:1.00 },
+  hard:   { name:'Hard',   lives:3, dmul:1.32, bossHpMul:1.35, bossRateMul:0.72, fallMul:1.28 },
+};
+const MODE_ORDER = ['easy','medium','hard'];
+function dcfg(){ return DIFFS[game.mode] || DIFFS.medium; }
 
 /* ---------- Game state ---------- */
 const S = { MENU:0, PLAY:1, DYING:2, CLEAR:3, OVER:4, BOSS:5, BOSSWIN:6, SHOP:7 };
@@ -114,6 +126,7 @@ const game = {
   rank: null, party: (localStorage.getItem('sausageParty')==='on'), eggTaps: 0, partyMsg: 0, bossHP: 0,
   resetArm: 0,                    // menu "reset to zone 1" needs a confirming second tap
   shopMsg: 0,                     // "not enough gold" flash in the shop
+  mode: (DIFFS[localStorage.getItem('sausageMode')] ? localStorage.getItem('sausageMode') : 'medium'),
 };
 const RESETBTN = { x:VW-58, y:34, w:96, h:30 };   // menu-only reset button hit-box (top-right)
 const MENU_LB   = { x:Math.round(VW*0.30), y:Math.round(VH*0.895), w:150, h:38 };  // Leaderboard
@@ -121,6 +134,11 @@ const MENU_SHOP = { x:Math.round(VW*0.70), y:Math.round(VH*0.895), w:150, h:38 }
 const SHOPG = { x0:18, y0:Math.round(VH*0.30), cw:(VW-46)/2, ch:56, gap:8 };       // shop item grid
 function shopCellRect(i){ const col=i%2, row=(i/2)|0; return { x:SHOPG.x0+col*(SHOPG.cw+10), y:SHOPG.y0+row*(SHOPG.ch+SHOPG.gap), w:SHOPG.cw, h:SHOPG.ch }; }
 const SHOPBACK = { x:VW/2, y:VH-38, w:200, h:40 };
+const MODE_BTN = {                              // menu difficulty selector (a row of three)
+  easy:   { x:Math.round(VW*0.19), y:Math.round(VH*0.69), w:130, h:40 },
+  medium: { x:Math.round(VW*0.50), y:Math.round(VH*0.69), w:130, h:40 },
+  hard:   { x:Math.round(VW*0.81), y:Math.round(VH*0.69), w:130, h:40 },
+};
 function hitRect(v, r){ return Math.abs(v.x-r.x) < r.w/2 && Math.abs(v.y-r.y) < r.h/2; }
 const LBBTN = { x:34, y:VH-48, r:26 };     // in-play "view leaderboard" button (bottom-left)
 const MUTEBTN = { x:VW-34, y:VH-48, r:24 }; // music mute toggle (bottom-right, menu + play)
@@ -316,8 +334,11 @@ function menuTap(cx, cy){
   if (hasSave() && v.y > VH*0.835-20 && v.y < VH*0.835+20 && Math.abs(v.x-VW/2) < 95){ clearProgress(); startRun(); return; }  // new game
   if (hitRect(v, MENU_LB)){ game.viewBoard=true; fetchBoard(); return; }        // leaderboard
   if (hitRect(v, MENU_SHOP)){ game.state=S.SHOP; game.shopMsg=0; blip(760,0.06); return; }  // shop
+  for (const m of MODE_ORDER){ if (hitRect(v, MODE_BTN[m])){ setMode(m); return; } }         // difficulty
+  if (v.y > VH*0.66 && v.y < VH*0.72) return;    // don't start a game by tapping the difficulty row's gaps
   if (hasSave()) continueRun(); else startRun();
 }
+function setMode(m){ if (!DIFFS[m]) return; game.mode = m; try { localStorage.setItem('sausageMode', m); } catch(_){} blip(720,0.06); }
 // Shop: tap an item to buy (or wear/unwear if already owned); Back returns.
 function shopTap(cx, cy){
   const v = toScreen(cx, cy);
@@ -471,7 +492,7 @@ function genLevel(n){
   const rng = mulberry32((runSeed ^ Math.imul(n, 2654435761)) >>> 0);
   const zone = zoneOf(n);
   const zl = zoneLevel(n);                        // 1..10 within this zone (gates features)
-  const d = diffOf(n);                            // difficulty scales by zone-level (with a nudge each zone)
+  const d = diffOf(n) * dcfg().dmul;              // difficulty by zone-level (with a nudge each zone), scaled by the chosen mode
   const spacing = 205 + Math.min(d * 7, 120);
   const bandLo  = 280, bandHi = 400 + Math.min(d * 8, 120);
   const startX  = CLIFF_W;
@@ -606,7 +627,7 @@ function genLevel(n){
 function startRun(fromLevel){
   const L = (fromLevel && fromLevel > 1) ? fromLevel : 1;
   clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.rank=null; game.viewBoard=false;
-  runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = L; game.lives = START_LIVES; game.score = L - 1; game.coins = 0; loadLevel(L);
+  runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = L; game.lives = dcfg().lives; game.score = L - 1; game.coins = 0; loadLevel(L);
 }
 function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
@@ -772,7 +793,8 @@ function step(){
   // Coconuts drop from coconut-trees as the player passes.
   for (const t of trees){ if (!t.coconut) continue;
     if (Math.abs(t.x - p.x) < 120 && p.x < t.x + 40){ if ((t.cd-=1) <= 0){ t.cd = 150 + Math.random()*120; coconuts.push({ x:t.x, y:t.top+30, vy:0 }); } } }
-  for (const c of coconuts){ c.vy += G*0.34; if (c.vy > 5) c.vy = 5; c.y += c.vy;   // gentler fall
+  const fm = dcfg().fallMul;
+  for (const c of coconuts){ c.vy += G*0.34*fm; if (c.vy > 5*fm) c.vy = 5*fm; c.y += c.vy;   // gentler fall
     if (p.iframe<=0 && Math.hypot(c.x-p.x,c.y-p.y) < p.r+13){ c.dead=true; loseLife('coconut'); }
     if (c.y > VH+60) c.dead=true; }
   coconuts = coconuts.filter(c=>!c.dead);
@@ -840,7 +862,7 @@ const BOSS_STAND = BOSS_FLOOR - STAND_DY;   // player's feet-on-floor y
 function enterBoss(){
   game.state = S.BOSS; game.arena = true; game.camX = 0; game.timer = 0;
   const tier = level.n / 3;                       // 1,2,3...
-  const hp = 5 + (tier-1)*5;                       // scales up steeply each boss
+  const hp = Math.max(3, Math.round((5 + (tier-1)*5) * dcfg().bossHpMul));  // scales each boss, and by mode
   boss = {
     g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:hp, tier, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
     helpers: [], barrels: [], cocos: [], fban: [], intro: 160,
@@ -906,10 +928,10 @@ function updateBoss(){
       }
     }
     // Gorilla attacks — faster and heavier the further you get (higher tier).
-    const T = g.tier;
-    if (--g.cd <= 0){ g.cd = Math.max(55, 150 - T*20 - Math.random()*25); g.anim = 0;
+    const T = g.tier, rm = dcfg().bossRateMul;
+    if (--g.cd <= 0){ g.cd = Math.max(55, 150 - T*20 - Math.random()*25) * rm; g.anim = 0;
       b.barrels.push({ x:g.x-30, y:BOSS_FLOOR-14, vx:-(2.4 + T*0.5 + Math.random()*1.1), spin:0 }); blip(160,0.1,'sawtooth'); }
-    if (--g.beatCd <= 0){ g.beatCd = Math.max(200, 360 - T*30); game.shake=10; blip(120,0.2,'sawtooth');
+    if (--g.beatCd <= 0){ g.beatCd = Math.max(200, 360 - T*30) * rm; game.shake=10; blip(120,0.2,'sawtooth');
       const nc = 1 + T; for (let i=0;i<nc;i++) b.cocos.push({ x:40+Math.random()*(VW-80), y:-20-Math.random()*40, vy:0.4 + T*0.25 + Math.random()*0.8 }); }
     // Helper monkeys: each lobs ONE banana at the gorilla then scurries away.
     for (const h of b.helpers){ if (h.gone) continue; h.bob += 0.1;
@@ -929,7 +951,8 @@ function updateBoss(){
     if (bar.x < -40) bar.dead=true; }
   b.barrels = b.barrels.filter(x=>!x.dead);
   // Falling coconuts — slow and dodgeable.
-  for (const c of b.cocos){ c.vy += BG*0.28; if (c.vy > 4.2) c.vy = 4.2; c.y += c.vy;
+  const bfm = dcfg().fallMul;
+  for (const c of b.cocos){ c.vy += BG*0.28*bfm; if (c.vy > 4.2*bfm) c.vy = 4.2*bfm; c.y += c.vy;
     if (p.iframe<=0 && Math.hypot(c.x-p.x, c.y-p.y) < p.r+13){ c.dead=true; loseLife('coconut'); }
     if (c.y > VH+40) c.dead=true; }
   b.cocos = b.cocos.filter(c=>!c.dead);
@@ -1626,8 +1649,9 @@ function drawPoison(x,y){ ctx.save(); ctx.translate(x,y);
 
 /* ---------- HUD ---------- */
 function drawHUD(){
-  // lives (mini sausages)
-  for(let i=0;i<START_LIVES;i++){ const x=20+i*23,y=32; ctx.globalAlpha=i<game.lives?1:0.22; ctx.save(); ctx.translate(x,y); ctx.scale(0.42,0.42);
+  // lives (mini sausages) — up to the current mode's max (never fewer than you hold)
+  const maxLives = Math.max(dcfg().lives, game.lives);
+  for(let i=0;i<maxLives;i++){ const x=20+i*23,y=32; ctx.globalAlpha=i<game.lives?1:0.22; ctx.save(); ctx.translate(x,y); ctx.scale(0.42,0.42);
     ctx.fillStyle='#e0824a'; ctx.strokeStyle='#a4531f'; ctx.lineWidth=4; capsulePath(0,0,15,40); ctx.fill(); ctx.stroke(); drawFace(0,-8,'happy'); ctx.restore(); ctx.globalAlpha=1; }
   // level + score
   ctx.fillStyle='#1e3a2e'; ctx.textAlign='right'; ctx.font='bold 26px system-ui'; ctx.fillText('LVL '+game.level,VW-16,34);
@@ -1672,6 +1696,7 @@ function drawOverlays(){
     const sp=player; player={mode:'swing',ax:0,ay:-90,x:0,y:0,vx:0,vy:0,legPh:game.t*0.1,r:15,face:'happy',iframe:0};
     const a=game.armed; game.armed=false; drawPlayer(player); game.armed=a; player=sp; ctx.restore();
     body(['Tap a TREETOP to grab it & swing.','Let go to fly to the next tree.','TAP again mid-swing to pump higher.','Two fingers to climb up the rope.','Grab 🌭 mini-sausages & the 🍳 pan —','beat the 🦍 GORILLA every 3rd level!'],VH*0.48);
+    drawModeSelector();
     if(hasSave()){
       const s=loadProgress();
       cta('CONTINUE • Lvl '+s.level, VH*0.78);
@@ -1770,6 +1795,17 @@ function drawBoardScreen(){
 function drawMuteBtn(){
   ctx.fillStyle='rgba(16,30,26,0.4)'; ctx.beginPath(); ctx.arc(MUTEBTN.x,MUTEBTN.y,MUTEBTN.r,0,6.29); ctx.fill();
   ctx.font='20px system-ui'; ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.fillText(musicOn?'🔊':'🔇', MUTEBTN.x, MUTEBTN.y+7);
+}
+// Difficulty selector row on the menu.
+function drawModeSelector(){
+  ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='bold 14px system-ui';
+  ctx.fillText('Difficulty — '+dcfg().lives+' lives', VW/2, VH*0.655);
+  for(const m of MODE_ORDER){ const b=MODE_BTN[m], on=game.mode===m;
+    ctx.fillStyle = on ? '#ffd23f' : 'rgba(255,255,255,0.14)';
+    roundRect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12); ctx.fill();
+    if(on){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; roundRect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12); ctx.stroke(); }
+    ctx.fillStyle = on ? '#7a3d16' : '#eaf6ef'; ctx.font='bold 17px system-ui'; ctx.fillText(DIFFS[m].name, b.x, b.y+6);
+  }
 }
 /* ---------- Costume shop screen ---------- */
 function drawShopScreen(){
