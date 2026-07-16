@@ -101,9 +101,10 @@ const game = {
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
     coins, birds, coconuts, spikes, boss, floatTexts;
+let runSeed = 0x5eed1;           // randomized each new game so every run differs
 
 /* ---------- Saved progress (resume at the level you reached) ---------- */
-function saveProgress(){ try { localStorage.setItem('sausageSave', JSON.stringify({ level:game.level, score:game.score, lives:game.lives, coins:game.coins })); } catch(_){} }
+function saveProgress(){ try { localStorage.setItem('sausageSave', JSON.stringify({ level:game.level, score:game.score, lives:game.lives, coins:game.coins, seed:runSeed })); } catch(_){} }
 function loadProgress(){ try { return JSON.parse(localStorage.getItem('sausageSave') || 'null'); } catch(_){ return null; } }
 function clearProgress(){ try { localStorage.removeItem('sausageSave'); } catch(_){} }
 function hasSave(){ const s = loadProgress(); return s && s.level > 1; }
@@ -246,18 +247,30 @@ function blip(freq, dur, type){
    LEVEL GENERATION
    ========================================================================== */
 function genLevel(n){
-  const rng = mulberry32((n * 2654435761) >>> 0);
+  // Seed mixes this run's random seed with the level number, so the same level
+  // number looks different every new game — but stays identical when you retry
+  // it after a death within the same run.
+  const rng = mulberry32((runSeed ^ Math.imul(n, 2654435761)) >>> 0);
   const spacing = 205 + Math.min(n * 7, 120);   // trees a bit further apart
   const bandLo  = 280, bandHi = 400 + Math.min(n * 8, 120);
   const startX  = CLIFF_W;
   let x = startX + 130;
   const A = [], T = [];
   const wantLen = 1500 + Math.min(n * 240, 5200);
+  // Each level picks a height "shape": a wave the treetops follow, so some
+  // levels climb, some dip, some zig-zag — and it's different every run.
+  const mid = (bandLo + bandHi) / 2, amp = (bandHi - bandLo) / 2;
+  const freq = 0.4 + rng() * 1.3, phase = rng() * 6.28, drift = (rng() - 0.5) * 26;
+  let i = 0, prevY = mid;
   while (x < wantLen){
-    const y = bandLo + rng() * (bandHi - bandLo);
+    let y = mid + Math.sin(phase + i*freq) * amp * (0.55 + rng()*0.45) + drift*i + (rng()-0.5)*36;
+    y = clamp(y, bandLo - 10, bandHi + 30);
+    y = clamp(y, prevY - 150, prevY + 150);      // keep the next vine reachable
+    prevY = y;
     A.push({ x, y });
     T.push({ x, top: y, sway: rng() * 6.28, w: 16 + rng()*8, coconut: rng() < 0.4 && n >= 2, cd: 60 + rng()*120 });
-    x += spacing * (0.85 + rng() * 0.4);
+    x += spacing * (0.82 + rng() * 0.5);          // varied gap rhythm
+    i++;
   }
   const lastA = A[A.length - 1] || { x: startX + 200 };
   const endCliffX = Math.min(lastA.x + spacing * 0.9, wantLen + 260);
@@ -316,8 +329,8 @@ function genLevel(n){
 /* ============================================================================
    LIFECYCLE
    ========================================================================== */
-function startRun(){ clearProgress(); game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
-function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
+function startRun(){ clearProgress(); runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
+function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
 function loadLevel(n){
   game.level = n;
@@ -950,6 +963,7 @@ monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]
 player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,face:'happy',legPh:0,r:15,onGround:true};
 requestAnimationFrame(frame);
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+
 
 
 
