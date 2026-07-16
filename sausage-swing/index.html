@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v19';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v20';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -113,6 +113,17 @@ const DIFFS = {
 };
 const MODE_ORDER = ['easy','medium','hard'];
 function dcfg(){ return DIFFS[game.mode] || DIFFS.medium; }
+// The leaderboard table only has name/score, so we tag the mode onto the name as
+// a "~X" suffix (X = E/M/H; '~' can't appear in a sanitised name) and split it
+// back out for display. Local scores just carry a .mode field.
+const LETTER_MODE = { E:'easy', M:'medium', H:'hard' };
+function modeLetter(m){ return m==='easy'?'E':m==='hard'?'H':'M'; }
+function entryInfo(row){
+  let name = String(row && row.name || ''); let mode = (row && row.mode) || null;
+  const i = name.lastIndexOf('~');
+  if (i > 0 && i === name.length-2 && LETTER_MODE[name.charAt(i+1)]){ mode = LETTER_MODE[name.charAt(i+1)]; name = name.slice(0,i); }
+  return { name, mode };
+}
 
 /* ---------- Game state ---------- */
 const S = { MENU:0, PLAY:1, DYING:2, CLEAR:3, OVER:4, BOSS:5, BOSSWIN:6, SHOP:7 };
@@ -196,11 +207,13 @@ function fetchBoard(){
     .then(rows => { onlineScores = Array.isArray(rows) ? rows : []; })
     .catch(() => { onlineScores = 'error'; });
 }
-function submitScore(name, score){
+function submitScore(name, score, mode){
   if (!SUPA_ON || !(score > 0)) return Promise.resolve();
+  // Encode the mode as a "~X" suffix, keeping the whole thing within 12 chars.
+  const tagged = String(name||'YOU').slice(0,10) + '~' + modeLetter(mode);
   return fetchWithTimeout(SUPA_URL+'/rest/v1/scores', { method:'POST',
       headers: Object.assign(supaHeaders(), { 'Prefer':'return=minimal' }),
-      body: JSON.stringify({ name: String(name||'YOU').slice(0,12), score }) }, 6000)
+      body: JSON.stringify({ name: tagged, score }) }, 6000)
     .then(()=>{}).catch(()=>{});
 }
 // Your world rank = (number of scores higher than yours) + 1.
@@ -230,7 +243,7 @@ function recordGameOver(){
   const scores = getScores();
   if (scores.length >= 10 && game.score <= scores[scores.length-1].score) return;
   const n = getName() || 'YOU';
-  scores.push({ name:n, score:game.score });
+  scores.push({ name:n, score:game.score, mode:game.mode });
   scores.sort((a,b)=>b.score-a.score);
   const top = scores.slice(0,10);
   game.newIdx = top.findIndex(s=>s.name===n && s.score===game.score);
@@ -662,7 +675,7 @@ function loseLife(reason){
     game.state = S.OVER; game.timer = 0; clearProgress();
     if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
     recordGameOver();                                   // local table
-    submitScore(getName(), game.score).then(()=>{ fetchBoard(); fetchRank(game.score); }); // online + rank
+    submitScore(getName(), game.score, game.mode).then(()=>{ fetchBoard(); fetchRank(game.score); }); // online + rank
   } else { game.state = S.DYING; game.timer = 40; }
 }
 
@@ -1751,14 +1764,26 @@ function drawOverlays(){
   }
   ctx.restore();
 }
+// Small coloured chip showing which mode a score was set on.
+function drawModeChip(cx, cy, mode){
+  const info = mode==='easy'?['EASY','#3f9e46'] : mode==='medium'?['MED','#c99a12'] : mode==='hard'?['HARD','#c0392b'] : null;
+  if(!info) return;
+  ctx.save(); ctx.font='bold 11px system-ui'; ctx.textAlign='center';
+  const w = ctx.measureText(info[0]).width + 12;
+  ctx.fillStyle=info[1]; roundRect(cx-w/2, cy-12, w, 16, 8); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.fillText(info[0], cx, cy);
+  ctx.restore();
+}
 function drawScoreList(y0, count){
   const scores = getScores(), lh = 27;
   if(scores.length===0){ ctx.textAlign='center'; ctx.fillStyle='#aeb8b4'; ctx.font='16px system-ui'; ctx.fillText('No scores yet — be the first!', VW/2, y0+10); return; }
   for(let i=0;i<Math.min(count,scores.length);i++){
-    const s=scores[i], y=y0+i*lh, hi=(i===game.newIdx);
+    const s=scores[i], y=y0+i*lh, hi=(i===game.newIdx), info=entryInfo(s);
     if(hi){ ctx.fillStyle='rgba(255,210,63,0.18)'; roundRect(VW/2-135, y-18, 270, 24, 6); ctx.fill(); }
     ctx.fillStyle = hi ? '#ffd23f' : '#eaf6ef'; ctx.font = (hi?'bold ':'')+'18px system-ui';
-    ctx.textAlign='left';  ctx.fillText((i+1)+'.', VW/2-128, y); ctx.fillText(String(s.name).slice(0,10), VW/2-104, y);
+    ctx.textAlign='left';  ctx.fillText((i+1)+'.', VW/2-128, y); ctx.fillText(info.name.slice(0,10), VW/2-104, y);
+    drawModeChip(VW/2+72, y-5, info.mode);
+    ctx.fillStyle = hi ? '#ffd23f' : '#eaf6ef'; ctx.font = (hi?'bold ':'')+'18px system-ui';
     ctx.textAlign='right'; ctx.fillText(String(s.score), VW/2+128, y);
   }
   ctx.textAlign='center';
@@ -1768,11 +1793,13 @@ function drawRows(rows, y0, count, hiName, hiScore){
   if(!rows || rows.length===0){ ctx.textAlign='center'; ctx.fillStyle='#aeb8b4'; ctx.font='16px system-ui'; ctx.fillText('No scores yet — be the first!', VW/2, y0+10); return; }
   let hiDone=false;
   for(let i=0;i<Math.min(count,rows.length);i++){
-    const s=rows[i], y=y0+i*lh;
-    const hi = !hiDone && hiName!=null && String(s.name)===String(hiName) && s.score===hiScore;
+    const s=rows[i], y=y0+i*lh, info=entryInfo(s);
+    const hi = !hiDone && hiName!=null && info.name===String(hiName) && s.score===hiScore;
     if(hi){ hiDone=true; ctx.fillStyle='rgba(255,210,63,0.18)'; roundRect(VW/2-135,y-18,270,24,6); ctx.fill(); }
     ctx.fillStyle=hi?'#ffd23f':'#eaf6ef'; ctx.font=(hi?'bold ':'')+'18px system-ui';
-    ctx.textAlign='left';  ctx.fillText((i+1)+'.', VW/2-128, y); ctx.fillText(String(s.name).slice(0,10), VW/2-104, y);
+    ctx.textAlign='left';  ctx.fillText((i+1)+'.', VW/2-128, y); ctx.fillText(info.name.slice(0,10), VW/2-104, y);
+    drawModeChip(VW/2+72, y-5, info.mode);
+    ctx.fillStyle=hi?'#ffd23f':'#eaf6ef'; ctx.font=(hi?'bold ':'')+'18px system-ui';
     ctx.textAlign='right'; ctx.fillText(String(s.score), VW/2+128, y);
   }
   ctx.textAlign='center';

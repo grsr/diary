@@ -42,13 +42,15 @@ rope, and **P** does a swing pump (stands in for shaking).
   device) and posts your score to a shared **online leaderboard** (Supabase).
   See it any time from the **🏆 Leaderboard** button on the menu, the **🏆**
   button in-play (pauses the game), or the game-over screen. If there's no
-  network it falls back to an on-device top-10. The Supabase `anon` key is public
-  by design and safe to ship; the table only allows read + insert (no edit/delete).
+  network it falls back to an on-device top-10. Each row shows a coloured
+  **mode chip** (EASY / MED / HARD) next to the score, so you can see which
+  difficulty it was set on. The Supabase `anon` key is public by design and safe
+  to ship; the table only allows read + insert (no edit/delete).
 - **World rank** is shown on the game-over screen ("You're world #4!") based on
   the online leaderboard.
 - **Music**: a looping chiptune plays while you play (a spookier one for boss
   fights). Toggle it with the 🔊/🔇 button on the menu or in-play.
-- **Version number** is shown in the corner of the menu (currently **v19**), so
+- **Version number** is shown in the corner of the menu (currently **v20**), so
   you can confirm you're on the latest build. Opening the game with an internet
   connection always loads the newest version.
 - **Gold coins** (stamped with a sausage) are scattered across every zone and
