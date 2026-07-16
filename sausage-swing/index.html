@@ -97,6 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
+const GAME_VERSION = 'v11';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -108,8 +109,9 @@ const game = {
   best: +(localStorage.getItem('sausageBest') || 0),
   coins: 0,                       // mini-sausages banked this run
   camX: 0, shake: 0, t: 0, timer: 0,
-  armed: false, panUses: 0, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false,
+  armed: false, panUses: 0, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false, paused: false,
 };
+const LBBTN = { x:34, y:VH-48, r:26 };   // in-play "view leaderboard" button (bottom-left)
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
     coins, birds, coconuts, spikes, bees, boss, floatTexts;
@@ -195,10 +197,14 @@ function onDown(e){
   e.preventDefault();
   pointers.set(e.pointerId, toWorld(e.clientX, e.clientY));
   startAudio(); requestMotion();
+  if (game.paused){ game.paused = false; return; }   // any tap resumes
   if (game.state === S.MENU){ if (game.viewBoard){ game.viewBoard=false; return; } menuTap(e.clientX, e.clientY); return; }
   if (game.state === S.OVER){ startRun(); return; }
   if (game.state === S.BOSS){ bossPress(e.pointerId, e.clientX, e.clientY); return; }
   if (game.state !== S.PLAY) return;
+
+  // In-play "view leaderboard" button (pauses the game).
+  { const v = toScreen(e.clientX, e.clientY); if (Math.hypot(v.x-LBBTN.x, v.y-LBBTN.y) <= LBBTN.r){ game.paused = true; fetchBoard(); return; } }
 
   const p = player;
   if (p.mode === 'swing'){ pump(); return; }   // tap while swinging = pump higher (hold a 2nd finger to climb)
@@ -419,7 +425,7 @@ function loadLevel(n){
   bananas = []; particles = []; coconuts = []; floatTexts = []; boss = null;
   clouds = clouds || makeClouds();
   game.armed = false; game.camX = 0; game.state = S.PLAY; game.timer = 0; game.panMsg = 0;
-  game.arena = false; game.hint = n === 1 ? 260 : 0;
+  game.arena = false; game.hint = n === 1 ? 260 : 0; game.paused = false;
   grappleId = null; pointers.clear(); pointerBtn.clear(); recomputeBtns();
   player = { x:CLIFF_W-40, y:CLIFF_TOP-STAND_DY, vx:0, vy:0, mode:'stand',
              ax:0, ay:0, L:0, curA:null, iframe:0, face:'happy', legPh:0, r:15, onGround:true };
@@ -503,6 +509,7 @@ function integrate(p, opts){
    UPDATE (normal levels)
    ========================================================================== */
 function step(){
+  if (game.paused){ game.t++; return; }   // frozen while viewing the leaderboard
   game.t++;
   if (game.shake > 0.5) game.shake *= 0.86; else game.shake = 0;
   if (game.panMsg > 0) game.panMsg--;
@@ -1018,7 +1025,10 @@ function drawHUD(){
     ctx.fillStyle='rgba(0,0,0,0.15)'; roundRect(120,VH-24,VW-140,8,4); ctx.fill();
     ctx.fillStyle='#57b94f'; roundRect(120,VH-24,(VW-140)*prog,8,4); ctx.fill();
     ctx.save(); ctx.translate(120+(VW-140)*prog,VH-20); ctx.scale(0.28,0.28); ctx.fillStyle='#e0824a'; capsulePath(0,0,15,40); ctx.fill(); ctx.restore();
-    if(level.boss){ ctx.fillStyle='#3b3b45'; ctx.font='16px system-ui'; ctx.textAlign='right'; ctx.fillText('🦍',VW-14,VH-16); } }
+    if(level.boss){ ctx.fillStyle='#3b3b45'; ctx.font='16px system-ui'; ctx.textAlign='right'; ctx.fillText('🦍',VW-14,VH-16); }
+    // in-play "view leaderboard" button (bottom-left)
+    ctx.fillStyle='rgba(16,30,26,0.4)'; ctx.beginPath(); ctx.arc(LBBTN.x,LBBTN.y,LBBTN.r,0,6.29); ctx.fill();
+    ctx.font='22px system-ui'; ctx.textAlign='center'; ctx.fillText('🏆',LBBTN.x,LBBTN.y+8); }
   // pan toast
   if(game.panMsg>0){ ctx.globalAlpha=clamp(game.panMsg/40,0,1); ctx.textAlign='center'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 18px system-ui'; ctx.fillText('🍳 Frying pan! Save it for the gorilla',VW/2,VH*0.24); ctx.globalAlpha=1; }
   // level-1 control hint
@@ -1030,6 +1040,7 @@ function drawHUD(){
 function drawOverlays(){
   ctx.setTransform(scale*dpr,0,0,scale*dpr,offX*dpr,offY*dpr);
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,VW,VH); ctx.clip(); ctx.textAlign='center';
+  if(game.paused){ drawBoardScreen(); ctx.restore(); return; }   // in-play leaderboard
   if(game.state===S.MENU){
     if(game.viewBoard){ drawBoardScreen(); ctx.restore(); return; }
     panel(); title('SAUSAGE SWING',VH*0.22);
@@ -1050,6 +1061,7 @@ function drawOverlays(){
     ctx.fillStyle='#7a3d16'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText('🏆 Leaderboard',VW/2,VH*0.895+6);
     // nickname (tap to change)
     ctx.fillStyle='#cfe0d8'; ctx.font='bold 15px system-ui'; ctx.fillText('👤 '+(getName()||'tap to set your name')+'   ✎', VW/2, VH*0.95);
+    ctx.textAlign='right'; ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='12px system-ui'; ctx.fillText(GAME_VERSION, VW-8, VH-8); ctx.textAlign='center';
   } else if(game.state===S.OVER){
     panel(); title('GAME OVER',VH*0.13);
     ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 22px system-ui';
@@ -1107,7 +1119,7 @@ function drawBoardScreen(){
   panel(); title('LEADERBOARD',VH*0.12);
   ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='14px system-ui'; ctx.fillText('Top players everywhere', VW/2, VH*0.16);
   drawBoard(VH*0.22, 15);
-  ctx.textAlign='center'; ctx.fillStyle='#ffd23f'; ctx.font='bold 16px system-ui'; ctx.fillText('tap to go back', VW/2, VH*0.95);
+  ctx.textAlign='center'; ctx.fillStyle='#ffd23f'; ctx.font='bold 16px system-ui'; ctx.fillText(game.paused?'tap to resume':'tap to go back', VW/2, VH*0.95);
 }
 function panel(){ ctx.fillStyle='rgba(16,30,26,0.74)'; ctx.fillRect(0,0,VW,VH); }
 function title(txt,y){ ctx.fillStyle='#ffd23f'; ctx.font='bold 42px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=6; ctx.lineJoin='round'; ctx.strokeText(txt,VW/2,y); ctx.fillText(txt,VW/2,y); }

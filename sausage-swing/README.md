@@ -33,10 +33,13 @@ rope, and **P** does a swing pump (stands in for shaking).
   and pick up where you left off — the menu shows a **Continue** button.
 - **Nickname + leaderboard.** The game asks for a nickname once (stored on the
   device) and posts your score to a shared **online leaderboard** (Supabase).
-  The menu has a **🏆 Leaderboard** button (global top 20) and the game-over
-  screen shows the board with your entry highlighted. If there's no network it
-  falls back to an on-device top-10. The Supabase `anon` key is public by design
-  and safe to ship; the table only allows read + insert (no edit/delete).
+  See it any time from the **🏆 Leaderboard** button on the menu, the **🏆**
+  button in-play (pauses the game), or the game-over screen. If there's no
+  network it falls back to an on-device top-10. The Supabase `anon` key is public
+  by design and safe to ship; the table only allows read + insert (no edit/delete).
+- **Version number** is shown in the corner of the menu (currently **v11**), so
+  you can confirm you're on the latest build. Opening the game with an internet
+  connection always loads the newest version.
 
 ## Levels
 
