@@ -43,12 +43,18 @@ rope, and **P** does a swing pump (stands in for shaking).
   the online leaderboard.
 - **Music**: a looping chiptune plays while you play (a spookier one for boss
   fights). Toggle it with the 🔊/🔇 button on the menu or in-play.
-- **Version number** is shown in the corner of the menu (currently **v17**), so
+- **Version number** is shown in the corner of the menu (currently **v18**), so
   you can confirm you're on the latest build. Opening the game with an internet
   connection always loads the newest version.
 - **Gold coins** (stamped with a sausage) are scattered across every zone and
-  banked **permanently** — a shown-on-the-menu total you'll spend in the coming
-  costume shop. They're separate from mini-sausages (which become boss helpers).
+  banked **permanently** — a shown-on-the-menu total you spend in the **Costume
+  Shop**. They're separate from mini-sausages (which become boss helpers).
+- **Costume Shop** (🛍️ on the menu): spend gold to buy and wear cosmetics — a
+  **moustache**, **beard**, **top hat**, **bike helmet**, **knight helmet**,
+  **kilt**, **dress**, and **t-shirts** (sausage 🌭, dinosaur 🦖, dog 🐶). One
+  item per slot (hat / facial-hair / outfit); tap an owned item to wear or remove
+  it. A live preview shows your sausage in the outfit, and it wears it in-game
+  too. Purchases are saved on the device.
 - **Reset to Zone 1** button (top-right of the menu) starts a brand-new run from
   the very first Jungle level. It needs a confirming second tap ("Sure? Tap"),
   and it keeps your gold and your leaderboard entry.
@@ -71,7 +77,12 @@ zone-1 level 5, yet still easier than zone-1 level 6.
   lobs **briefcases** and rains **electric zaps**, helped against by your
   slingshot-kid pals, over **metal boss cables**. Its own cooler city soundtrack
   plays too.
-- **Mineshaft** (level 20+): *coming soon.*
+- **Mineshaft** (level 20+): swing from **wooden pit-prop supports** deep
+  underground (dirt strata, lanterns, mine-cart rails). Enemies are **bats that
+  spit poison**; **rocks** tumble down from the supports instead of coconuts; the
+  boss is a **gorilla in a hi-vis vest and miner's hard hat** who hurls
+  **pickaxes** and rains **boulders**, with **bat helpers** and **wooden boss
+  ropes**. Your sausage even puts on a **miner's hat**. Slow, spooky mine music.
 
 ## Levels
 
