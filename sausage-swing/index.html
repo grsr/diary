@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v21';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v22';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -783,9 +783,10 @@ function step(){
   for (const c of coins){ if (c.got) continue; c.bob += 0.1;
     if (Math.hypot(c.x-p.x, c.y-p.y) < 30){ c.got=true; game.coins++; blip(1040,0.06); spawnText(c.x,c.y-10,'+1','#ffd27a'); for(let i=0;i<6;i++) spawnSpark(c.x,c.y,'#e0824a'); } }
 
-  // Gold coins — banked permanently (for the costume shop).
+  // Gold coins — banked permanently (for the costume shop). Not collectable in
+  // Invincible mode, so you can't farm gold risk-free.
   for (const gc of goldcoins){ if (gc.got) continue; gc.bob += 0.08;
-    if (Math.hypot(gc.x-p.x, gc.y-p.y) < 30){ gc.got=true; addGold(1); blip(1320,0.06); blip(1760,0.07); spawnText(gc.x,gc.y-12,'+1 GOLD','#ffd24a'); for(let i=0;i<10;i++) spawnSpark(gc.x,gc.y,'#ffd24a'); } }
+    if (!dcfg().godmode && Math.hypot(gc.x-p.x, gc.y-p.y) < 30){ gc.got=true; addGold(1); blip(1320,0.06); blip(1760,0.07); spawnText(gc.x,gc.y-12,'+1 GOLD','#ffd24a'); for(let i=0;i<10;i++) spawnSpark(gc.x,gc.y,'#ffd24a'); } }
 
   // Invincibility bananas.
   if (p.invuln > 0) p.invuln--;
@@ -1129,7 +1130,7 @@ function drawWorld(){
   for(const s of spikes) if(s.building) drawBuilding(s);   // city blocks sit behind the cables
   for(const t of trees) drawTree(t);
   for(const c of coins) if(!c.got) drawCoin(c.x, c.y+Math.sin(c.bob)*5);
-  for(const gc of goldcoins) if(!gc.got) drawGold(gc.x, gc.y+Math.sin(gc.bob)*5);
+  for(const gc of goldcoins) if(!gc.got){ if(dcfg().godmode) ctx.globalAlpha=0.28; drawGold(gc.x, gc.y+Math.sin(gc.bob)*5); ctx.globalAlpha=1; }
   for(const g of powerups) if(!g.got) drawGolden(g.x, g.y+Math.sin(g.bob)*6);
   if(pan && !pan.got) drawPan(pan.x, pan.y+Math.sin(pan.bob)*6);
   drawCliff(0,CLIFF_W,true); drawCliff(level.endCliffX,CLIFF_W,false); drawFinishLine(level.endCliffX);
@@ -1843,7 +1844,7 @@ function drawMuteBtn(){
 // Difficulty selector (2×2 grid) on the menu.
 function drawModeSelector(){
   ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='bold 14px system-ui';
-  const note = dcfg().godmode ? '∞ lives — not on the leaderboard' : 'Difficulty — '+dcfg().lives+' lives';
+  const note = dcfg().godmode ? '∞ lives — no gold, no leaderboard' : 'Difficulty — '+dcfg().lives+' lives';
   ctx.fillText(note, VW/2, VH*0.645);
   for(const m of MODE_ORDER){ const b=MODE_BTN[m], on=game.mode===m, inv=(m==='invincible');
     ctx.fillStyle = on ? (inv?'#8fe0a0':'#ffd23f') : 'rgba(255,255,255,0.14)';

@@ -33,8 +33,9 @@ rope, and **P** does a swing pump (stands in for shaking).
   **Easy** is now really gentle (few, slow hazards and weak bosses); **Medium** is
   the classic balance; **Hard** piles it on. **Invincible** means you can't be
   hurt and can't fall to your death — great for practice or just messing about —
-  but those runs **don't count on the leaderboard**. Your choice is saved and
-  applies to your next new game (a continued game keeps the mode it started on).
+  but those runs **don't count on the leaderboard** and you **can't collect gold**
+  (so there's no risk-free farming). Your choice is saved and applies to your next
+  new game (a continued game keeps the mode it started on).
 - Getting hit or falling costs a life and restarts the current level. Run out and
   it's **game over** — but you **respawn at the start of the zone you died in**,
   not all the way back in the Jungle (die in the City and you restart at level
@@ -53,7 +54,7 @@ rope, and **P** does a swing pump (stands in for shaking).
   the online leaderboard.
 - **Music**: a looping chiptune plays while you play (a spookier one for boss
   fights). Toggle it with the 🔊/🔇 button on the menu or in-play.
-- **Version number** is shown in the corner of the menu (currently **v21**), so
+- **Version number** is shown in the corner of the menu (currently **v22**), so
   you can confirm you're on the latest build. Opening the game with an internet
   connection always loads the newest version.
 - **Gold coins** (stamped with a sausage) are scattered across every zone and
