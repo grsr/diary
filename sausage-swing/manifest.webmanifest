@@ -1,0 +1,16 @@
+{
+  "name": "Sausage Swing",
+  "short_name": "Sausage",
+  "description": "Swing a stick-limbed sausage from tree to tree across the ravine, dodge banana-throwing monkeys, and grab the frying pan to whack them. Endless, procedurally harder levels.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#79c6e8",
+  "theme_color": "#79c6e8",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

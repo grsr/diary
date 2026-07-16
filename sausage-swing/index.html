@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#7ec8e3">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sausage Swing">
+<title>Sausage Swing</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  html,body{
+    margin:0;padding:0;height:100%;overflow:hidden;background:#0a1a24;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;touch-action:none;
+  }
+  /* Fill any letterbox bars with a sky-ish gradient so it blends. */
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(#5bb4d6,#0a1a24);}
+  canvas{display:block;touch-action:none;image-rendering:auto;}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<script>
+"use strict";
+/* ============================================================================
+   SAUSAGE SWING
+   Swing a stick-limbed sausage from tree to tree across a ravine to the next
+   cliff. Monkeys lob bananas at you. Levels are procedurally generated and get
+   harder as you go. Every 3rd level a frying pan lets you whack the monkeys.
+   3 lives; score = levels cleared. One-touch control: hold to grab & swing,
+   release to fly.
+   Everything is in one file, no dependencies.
+   ========================================================================== */
+
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+
+/* ---- Virtual portrait resolution. Game logic runs in these units and is
+   letterboxed (contain) onto the real screen so play is identical on any
+   device. ---- */
+const VW = 480, VH = 854;
+let scale = 1, offX = 0, offY = 0, dpr = 1;
+
+function resize(){
+  dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = window.innerWidth, h = window.innerHeight;
+  scale = Math.min(w / VW, h / VH);
+  offX = (w - VW * scale) / 2;
+  offY = (h - VH * scale) / 2;
+  cvs.style.width = w + 'px';
+  cvs.style.height = h + 'px';
+  cvs.width = Math.round(w * dpr);
+  cvs.height = Math.round(h * dpr);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* Map a client (screen) point into virtual coords. */
+function toVirtual(clientX, clientY){
+  return { x: (clientX - offX) / scale, y: (clientY - offY) / scale };
+}
+
+/* ---------- Deterministic RNG (mulberry32) so a level is reproducible when
+   you die and retry it. ---------- */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ---------- Tunables ---------- */
+const G          = 0.42;   // gravity per 60Hz step
+const AIR        = 0.994;  // air drag while free
+const GRAPPLE    = 360;    // max reach to grab an anchor
+const RELEASE_KICK = 1.07; // small momentum reward on release
+const MAXV       = 24;     // speed cap
+const CLIFF_TOP  = Math.round(VH * 0.60);   // y of cliff/ravine top edge
+const CLIFF_W    = 240;    // width of start/end cliffs
+
+/* ---------- Game state ---------- */
+const S = { MENU:0, PLAY:1, DYING:2, CLEAR:3, OVER:4 };
+const game = {
+  state: S.MENU,
+  level: 1,
+  lives: 3,
+  score: 0,          // levels cleared
+  best: +(localStorage.getItem('sausageBest') || 0),
+  camX: 0,
+  shake: 0,
+  t: 0,              // time counter for animation
+  timer: 0,          // generic phase timer
+  armed: false,      // has the frying pan
+  panMsg: 0,
+};
+
+let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level;
+
+/* ---------- Input ---------- */
+const pointers = new Set();
+let pressing = false;
+
+function press(){ pressing = true; if (game.state === S.MENU || game.state === S.OVER) startRun(); }
+function releaseInput(){
+  pressing = false;
+  if (game.state === S.PLAY && player.mode === 'swing') detach();
+}
+cvs.addEventListener('pointerdown', e => { e.preventDefault(); pointers.add(e.pointerId); press(); }, {passive:false});
+cvs.addEventListener('pointerup',   e => { e.preventDefault(); pointers.delete(e.pointerId); if (!pointers.size) releaseInput(); }, {passive:false});
+cvs.addEventListener('pointercancel',e => { pointers.delete(e.pointerId); if (!pointers.size) releaseInput(); });
+// Desktop convenience.
+window.addEventListener('keydown', e => { if (e.code === 'Space' && !e.repeat){ e.preventDefault(); press(); } });
+window.addEventListener('keyup',   e => { if (e.code === 'Space'){ e.preventDefault(); releaseInput(); } });
+window.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
+
+/* ============================================================================
+   LEVEL GENERATION
+   Difficulty scales with level number `n`: longer ravines, wider anchor
+   spacing, a taller height band, and more/faster monkeys.
+   ========================================================================== */
+function genLevel(n){
+  const rng = mulberry32((n * 2654435761) >>> 0);
+  const spacing   = 175 + Math.min(n * 7, 120);            // 175 .. 295
+  const spacing2  = spacing;
+  // Anchors sit within the swing operating band so the next vine is reachable
+  // near your flight apex. The band widens (and drops a touch) with difficulty.
+  const bandLo    = 280;
+  const bandHi    = 400 + Math.min(n * 8, 120);            // 400 .. 520
+  const startX    = CLIFF_W;
+  let x = startX + 130;
+  const A = [];   // anchors {x,y}
+  const T = [];   // trees   {x, ground, branches:[{x,y}]}
+
+  // Walk across the ravine dropping trees with a branch anchor near the top.
+  const endLimit = () => 1500 + Math.min(n * 240, 5200);   // rough length target
+  const wantLen = endLimit();
+  while (x < wantLen){
+    const y = bandLo + rng() * (bandHi - bandLo);
+    const anchor = { x, y };
+    A.push(anchor);
+    // Tree: trunk rising from the ravine floor to the branch, plus foliage.
+    T.push({ x, ground: VH + 40, top: y, sway: rng() * 6.28, w: 16 + rng()*8 });
+    x += spacing2 * (0.85 + rng() * 0.4);
+  }
+  // End cliff begins just past the last anchor, kept within reach.
+  const lastA = A[A.length - 1] || { x: startX + 200 };
+  const endCliffX = Math.min(lastA.x + spacing * 0.9, wantLen + 260);
+  const levelLen = endCliffX + CLIFF_W;
+
+  // Monkeys on interior branches. Level 1 has none; scales up after.
+  const M = [];
+  let monkeyCount = Math.max(0, Math.round((n - 1) * 0.85));
+  monkeyCount = Math.min(monkeyCount, Math.max(0, A.length - 3), 9);
+  const usable = [];
+  for (let i = 1; i < A.length - 1; i++) usable.push(i);
+  // shuffle usable via rng
+  for (let i = usable.length - 1; i > 0; i--){
+    const j = (rng() * (i + 1)) | 0; const t = usable[i]; usable[i] = usable[j]; usable[j] = t;
+  }
+  for (let i = 0; i < monkeyCount; i++){
+    const a = A[usable[i]];
+    if (!a) break;
+    M.push({
+      x: a.x, y: a.y - 6, alive: true,
+      cd: 40 + rng() * 60,                       // frames till first throw
+      rate: Math.max(60, 150 - n * 6),           // lower = throws more often
+      speed: 6.2 + Math.min(n * 0.22, 5),        // banana launch speed
+      face: rng(),
+    });
+  }
+
+  // Frying pan every 3rd level, floating on the swing path mid-level.
+  let P = null;
+  if (n % 3 === 0 && A.length > 2){
+    const a = A[(A.length / 2) | 0];
+    P = { x: a.x + spacing * 0.4, y: a.y + 120, got: false, bob: 0 };
+  }
+
+  return {
+    n, len: levelLen, endCliffX,
+    anchors: A, trees: T, monkeys: M, pan: P,
+  };
+}
+
+/* ============================================================================
+   RUN / LEVEL LIFECYCLE
+   ========================================================================== */
+function startRun(){
+  game.level = 1;
+  game.lives = 3;
+  game.score = 0;
+  loadLevel(1);
+}
+
+function loadLevel(n){
+  level   = genLevel(n);
+  anchors = level.anchors;
+  trees   = level.trees;
+  monkeys = level.monkeys;
+  pan     = level.pan;
+  bananas = [];
+  particles = [];
+  clouds = clouds || makeClouds();
+  game.armed = !!0;           // lose the pan between levels
+  game.camX = 0;
+  game.state = S.PLAY;
+  game.timer = 0;
+  game.panMsg = 0;
+  // Player starts standing on the left cliff.
+  player = {
+    x: CLIFF_W - 40, y: CLIFF_TOP, vx: 0, vy: 0,
+    mode: 'stand',            // stand | swing | fly
+    ax: 0, ay: 0, L: 0,       // current anchor + rope length
+    curA: null, lastA: null, regrab: 0,  // for the re-grab lockout
+    face: 'happy', legPh: 0, r: 15,
+  };
+}
+
+function retryLevel(){ loadLevel(game.level); }
+
+function nextLevel(){
+  game.score++;
+  if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
+  game.level++;
+  loadLevel(game.level);
+}
+
+function loseLife(reason){
+  if (game.state !== S.PLAY) return;
+  game.lives--;
+  game.shake = 16;
+  spawnSplat(player.x, player.y, reason === 'banana' ? '#ffd23f' : '#c86b3a');
+  if (game.lives <= 0){
+    game.state = S.OVER;
+    game.timer = 0;
+    if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
+  } else {
+    game.state = S.DYING;
+    game.timer = 40;         // brief pause, then retry same level
+  }
+}
+
+/* ---------- Grapple ---------- */
+function findAnchor(px, py, exclude){
+  let best = null, bestScore = Infinity;
+  for (const a of anchors){
+    if (a === exclude) continue;          // don't instantly re-grab the vine you just left
+    const dx = a.x - px, dy = a.y - py;
+    const d = Math.hypot(dx, dy);
+    if (d > GRAPPLE) continue;
+    if (a.y > py + 60) continue;          // must be roughly above
+    // Prefer nearer anchors that are ahead of / overhead the player.
+    let score = d;
+    if (a.x < px - 20) score += 260;      // discourage grabbing behind
+    if (score < bestScore){ bestScore = score; best = a; }
+  }
+  return best;
+}
+function attach(a){
+  player.curA = a;
+  player.ax = a.x; player.ay = a.y;
+  player.L = Math.max(60, Math.hypot(a.x - player.x, a.y - player.y));
+  if (player.mode === 'stand'){          // kick off the cliff toward the anchor
+    player.vx = Math.sign(a.x - player.x) * 2.2 || 2.2;
+    player.vy = -1;
+  }
+  player.mode = 'swing';
+}
+function detach(){
+  player.mode = 'fly';
+  player.lastA = player.curA; player.regrab = 16;   // fly free before catching the next vine
+  player.vx *= RELEASE_KICK;
+  player.vy = player.vy * RELEASE_KICK - 0.4;   // tiny upward pop
+  clampV(player);
+}
+function clampV(p){
+  const s = Math.hypot(p.vx, p.vy);
+  if (s > MAXV){ p.vx = p.vx / s * MAXV; p.vy = p.vy / s * MAXV; }
+}
+
+/* ============================================================================
+   UPDATE (fixed 60Hz steps)
+   ========================================================================== */
+function step(){
+  game.t++;
+  if (game.shake > 0) game.shake *= 0.86;
+  if (game.panMsg > 0) game.panMsg--;
+
+  if (game.state === S.DYING){
+    if (--game.timer <= 0) retryLevel();
+    updateParticles();
+    return;
+  }
+  if (game.state === S.CLEAR){
+    if (--game.timer <= 0) nextLevel();
+    updateParticles();
+    return;
+  }
+  if (game.state !== S.PLAY){ updateParticles(); updateClouds(); return; }
+
+  const p = player;
+
+  if (p.regrab > 0) p.regrab--;
+  // Auto-grab while holding: catch a vine the moment one is in range, but not
+  // the vine you just released (regrab lockout) so you chain forward.
+  if (pressing && p.mode === 'fly'){
+    const a = findAnchor(p.x, p.y, p.regrab > 0 ? p.lastA : null);
+    if (a) attach(a);
+  }
+  if (pressing && p.mode === 'stand'){
+    const a = findAnchor(p.x, p.y);
+    if (a) attach(a);
+  }
+
+  // ---- Physics ----
+  if (p.mode === 'swing'){
+    p.vy += G;
+    p.x += p.vx; p.y += p.vy;
+    // Constrain to the rope circle, project velocity to the tangent.
+    let dx = p.x - p.ax, dy = p.y - p.ay;
+    let d = Math.hypot(dx, dy) || 1;
+    const diff = (d - p.L) / d;
+    p.x -= dx * diff; p.y -= dy * diff;
+    dx = p.x - p.ax; dy = p.y - p.ay; d = Math.hypot(dx, dy) || 1;
+    const nx = dx / d, ny = dy / d;
+    const radial = p.vx * nx + p.vy * ny;
+    p.vx -= radial * nx; p.vy -= radial * ny;
+    p.vx *= 0.999;
+    clampV(p);
+  } else if (p.mode === 'fly'){
+    p.vy += G;
+    p.vx *= AIR;
+    p.x += p.vx; p.y += p.vy;
+    clampV(p);
+  }
+  p.legPh += 0.2;
+
+  // ---- Camera follows, keeping player left-of-centre to see ahead ----
+  const targetCam = clamp(p.x - VW * 0.36, 0, level.len - VW);
+  game.camX += (targetCam - game.camX) * 0.12;
+
+  // ---- Face expression ----
+  if (p.mode === 'swing') p.face = 'happy';
+  else if (p.mode === 'fly') p.face = p.vy > 6 ? 'worried' : 'ooh';
+  else p.face = 'happy';
+
+  // ---- Pan pickup ----
+  if (pan && !pan.got){
+    pan.bob += 0.08;
+    if (Math.hypot(pan.x - p.x, pan.y - p.y) < 34){
+      pan.got = true; game.armed = true; game.panMsg = 130;
+      spawnSpark(pan.x, pan.y, '#cfd3d8');
+    }
+  }
+
+  // ---- Monkeys throw bananas ----
+  for (const m of monkeys){
+    if (!m.alive) continue;
+    // Whack on contact when armed.
+    if (game.armed && Math.hypot(m.x - p.x, m.y - p.y) < 30){
+      m.alive = false; game.shake = 12; spawnSplat(m.x, m.y, '#8b5a2b');
+      spawnText(m.x, m.y, 'WHACK!');
+      continue;
+    }
+    // Only active when on-screen-ish and ahead of / near the player.
+    const onScreen = m.x > game.camX - 40 && m.x < game.camX + VW + 40;
+    if (onScreen && Math.abs(m.x - p.x) < VW * 0.7){
+      m.cd--;
+      if (m.cd <= 0){
+        m.cd = m.rate * (0.7 + Math.random() * 0.6);
+        throwBanana(m, p);
+      }
+    }
+  }
+
+  // ---- Bananas ----
+  for (const b of bananas){
+    b.vy += G * 0.55;
+    b.x += b.vx; b.y += b.vy;
+    b.spin += 0.3;
+    if (Math.hypot(b.x - p.x, b.y - p.y) < p.r + 12){
+      b.dead = true;
+      loseLife('banana');
+    }
+    if (b.y > VH + 60 || b.x < game.camX - 80) b.dead = true;
+  }
+  bananas = bananas.filter(b => !b.dead);
+
+  updateParticles();
+  updateClouds();
+
+  // ---- Win / lose checks ----
+  // Reached the end cliff ledge?
+  if (p.x >= level.endCliffX && p.y >= CLIFF_TOP - 30){
+    p.y = CLIFF_TOP; p.mode = 'stand'; p.vx = p.vy = 0;
+    game.state = S.CLEAR; game.timer = 55;
+    for (let i = 0; i < 24; i++) spawnSpark(p.x, p.y - 20, '#ffe27a');
+    return;
+  }
+  // Fell into the ravine (below the world) — but standing on either cliff top
+  // is safe.
+  const overStartCliff = p.x < CLIFF_W;
+  const overEndCliff   = p.x >= level.endCliffX;
+  if ((overStartCliff || overEndCliff) && p.mode !== 'swing' && p.y >= CLIFF_TOP - p.r){
+    // Landed back on a cliff top safely.
+    if (p.vy >= 0){ p.y = CLIFF_TOP; p.vy = 0; p.vx *= 0.5; p.mode = 'stand'; }
+  }
+  if (p.y > VH + 80){ loseLife('fall'); }
+}
+
+function throwBanana(m, p){
+  // Lead the target a little; arc set by launch angle + banana gravity.
+  const dx = (p.x + p.vx * 8) - m.x;
+  const dy = (p.y) - m.y;
+  const ang = Math.atan2(dy - 60, dx);   // aim a touch high for the arc
+  bananas.push({
+    x: m.x, y: m.y - 10,
+    vx: Math.cos(ang) * m.speed,
+    vy: Math.sin(ang) * m.speed - 2,
+    spin: 0, dead: false,
+  });
+}
+
+/* ---------- Particles / juice ---------- */
+function updateParticles(){
+  for (const q of particles){
+    q.vy += 0.3; q.x += q.vx; q.y += q.vy; q.life--;
+    if (q.txt) q.vy *= 0.9;
+  }
+  particles = particles.filter(q => q.life > 0);
+}
+function spawnSplat(x, y, col){
+  for (let i = 0; i < 16; i++){
+    const a = Math.random() * 6.28, s = 1 + Math.random() * 5;
+    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 2, life: 30 + Math.random()*20, col, r: 2 + Math.random()*3 });
+  }
+}
+function spawnSpark(x, y, col){
+  const a = Math.random()*6.28, s = 1 + Math.random()*3;
+  particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 1, life: 24, col, r: 2 });
+}
+function spawnText(x, y, txt){
+  particles.push({ x, y, vx: 0, vy: -1.4, life: 45, col:'#fff', txt });
+}
+
+/* ---------- Clouds (parallax fluff) ---------- */
+function makeClouds(){
+  const c = [];
+  for (let i = 0; i < 8; i++) c.push({ x: Math.random()*3000, y: 40 + Math.random()*220, s: 0.6 + Math.random()*0.9, sp: 0.1 + Math.random()*0.2 });
+  return c;
+}
+function updateClouds(){ for (const c of clouds){ c.x -= c.sp; if (c.x < -200) c.x += 3400; } }
+
+function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
+
+/* ============================================================================
+   RENDER
+   ========================================================================== */
+function render(){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Sky fills whole backing buffer (covers letterbox bars too).
+  const W = cvs.width / dpr, H = cvs.height / dpr;
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#79c6e8'); sky.addColorStop(0.7, '#bfe9f5'); sky.addColorStop(1, '#e9f8ef');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+
+  // Enter virtual space (letterboxed), with screen shake.
+  const sh = game.shake > 0.5 ? game.shake : 0;
+  const shx = sh ? (Math.random()*2-1)*sh : 0;
+  const shy = sh ? (Math.random()*2-1)*sh : 0;
+  ctx.setTransform(scale*dpr, 0, 0, scale*dpr, (offX+shx)*dpr, (offY+shy)*dpr);
+
+  // Clip to the virtual viewport so world art doesn't spill into the bars.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, VW, VH); ctx.clip();
+
+  drawParallax();
+
+  ctx.save();
+  ctx.translate(-game.camX, 0);
+  drawWorld();
+  ctx.restore();
+
+  drawHUD();
+  ctx.restore();
+
+  drawOverlays();
+}
+
+function drawParallax(){
+  // Sun.
+  ctx.fillStyle = 'rgba(255,244,190,0.9)';
+  ctx.beginPath(); ctx.arc(VW-70, 90, 46, 0, 6.29); ctx.fill();
+  // Clouds.
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  for (const c of clouds){
+    const x = c.x - game.camX*0.3;
+    const xx = ((x % (VW+400)) + (VW+400)) % (VW+400) - 200;
+    cloud(xx, c.y, 34*c.s);
+  }
+  // Far hills (parallax).
+  const hillY = CLIFF_TOP + 40;
+  ctx.fillStyle = '#8fd08a';
+  hills(-game.camX*0.4, hillY, 0.6, '#8fd08a');
+  hills(-game.camX*0.55 + 140, hillY+28, 0.8, '#79c47a');
+}
+function cloud(x, y, r){
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, 6.29); ctx.arc(x+r, y+6, r*0.8, 0, 6.29);
+  ctx.arc(x-r, y+6, r*0.8, 0, 6.29); ctx.arc(x+r*0.4, y-r*0.5, r*0.7, 0, 6.29);
+  ctx.fill();
+}
+function hills(off, y, amp, col){
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(0, VH);
+  for (let x = -100; x <= VW+100; x += 40){
+    const yy = y + Math.sin((x - off) * 0.01) * 30 * amp + Math.sin((x-off)*0.03)*10*amp;
+    ctx.lineTo(x, yy);
+  }
+  ctx.lineTo(VW, VH); ctx.closePath(); ctx.fill();
+}
+
+function drawWorld(){
+  // Ravine shadow below the cliff line.
+  const rav = ctx.createLinearGradient(0, CLIFF_TOP, 0, VH);
+  rav.addColorStop(0, 'rgba(40,70,60,0.0)'); rav.addColorStop(1, 'rgba(20,40,35,0.55)');
+  ctx.fillStyle = rav; ctx.fillRect(game.camX, CLIFF_TOP, VW, VH-CLIFF_TOP);
+
+  // Trees (behind the player).
+  for (const t of trees) drawTree(t);
+
+  // Frying pan.
+  if (pan && !pan.got) drawPan(pan.x, pan.y + Math.sin(pan.bob)*6);
+
+  // Cliffs.
+  drawCliff(0, CLIFF_W, true);
+  drawCliff(level.endCliffX, CLIFF_W, false);
+
+  // Monkeys.
+  for (const m of monkeys) if (m.alive) drawMonkey(m);
+
+  // Bananas.
+  for (const b of bananas) drawBanana(b);
+
+  // Player + rope.
+  drawPlayer(player);
+
+  // Particles.
+  for (const q of particles){
+    if (q.txt){
+      ctx.fillStyle = q.col; ctx.font = 'bold 22px system-ui';
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = clamp(q.life/45, 0, 1);
+      ctx.fillText(q.txt, q.x, q.y); ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = q.col; ctx.globalAlpha = clamp(q.life/40, 0, 1);
+      ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, 6.29); ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function drawCliff(x, w, isStart){
+  const top = CLIFF_TOP;
+  // Rock.
+  ctx.fillStyle = '#9a8b76';
+  ctx.beginPath();
+  ctx.moveTo(x, top);
+  ctx.lineTo(x + w, top);
+  ctx.lineTo(x + w, VH);
+  ctx.lineTo(x, VH);
+  ctx.closePath(); ctx.fill();
+  // Rock shading.
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillRect(x, top+18, w, VH-top);
+  // Grass cap.
+  ctx.fillStyle = '#57b94f';
+  ctx.fillRect(x, top-10, w, 18);
+  ctx.fillStyle = '#66cf5c';
+  for (let gx = x+4; gx < x+w; gx += 12){
+    ctx.beginPath(); ctx.moveTo(gx, top-10); ctx.lineTo(gx+4, top-20); ctx.lineTo(gx+8, top-10); ctx.fill();
+  }
+  // A flag on the finish cliff.
+  if (!isStart){
+    ctx.strokeStyle = '#5a4632'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x+w/2, top-10); ctx.lineTo(x+w/2, top-70); ctx.stroke();
+    ctx.fillStyle = '#ff5252';
+    const wav = Math.sin(game.t*0.15)*4;
+    ctx.beginPath(); ctx.moveTo(x+w/2, top-70); ctx.lineTo(x+w/2+34, top-62+wav); ctx.lineTo(x+w/2, top-52); ctx.fill();
+  }
+}
+
+function drawTree(t){
+  const sway = Math.sin(game.t*0.02 + t.sway) * 4;
+  // Trunk from ravine floor up to the branch.
+  ctx.strokeStyle = '#6b4a2f'; ctx.lineWidth = t.w;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(t.x, VH+20);
+  ctx.quadraticCurveTo(t.x - 6, (VH+t.top)/2, t.x + sway, t.top);
+  ctx.stroke();
+  // A couple of side branches.
+  ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.moveTo(t.x, t.top+50); ctx.lineTo(t.x-30, t.top+30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(t.x, t.top+80); ctx.lineTo(t.x+34, t.top+58); ctx.stroke();
+  // Foliage clumps around the anchor.
+  const fx = t.x + sway, fy = t.top;
+  const foliage = (cx, cy, r, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 6.29); ctx.fill(); };
+  foliage(fx-24, fy-6, 30, '#2f8f3e');
+  foliage(fx+24, fy-6, 30, '#2f8f3e');
+  foliage(fx, fy-30, 34, '#3fa34d');
+  foliage(fx-10, fy+6, 26, '#37953f');
+  foliage(fx+14, fy+2, 24, '#43ad51');
+  // The anchor knob (grab point) hangs just under the leaves.
+  ctx.fillStyle = 'rgba(60,40,25,0.9)';
+  ctx.beginPath(); ctx.arc(t.x + sway, t.top, 5, 0, 6.29); ctx.fill();
+}
+
+/* ---- The star: a sausage with a drawn-on face and stick limbs. ---- */
+function drawPlayer(p){
+  // Rope first.
+  if (p.mode === 'swing'){
+    ctx.strokeStyle = '#efe6c8'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(p.ax, p.ay); ctx.lineTo(p.x, p.y - 6); ctx.stroke();
+  }
+
+  // Body orientation.
+  let ang;
+  if (p.mode === 'swing') ang = Math.atan2(p.y - p.ay, p.x - p.ax) - Math.PI/2;
+  else if (p.mode === 'fly') ang = Math.atan2(p.vy, p.vx);
+  else ang = 0; // standing upright
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  // For standing, keep upright; else lean along motion but keep it gentle.
+  const lean = p.mode === 'stand' ? 0 : clamp(ang, -1.2, 1.2) * 0.5;
+  ctx.rotate(lean);
+
+  const bodyLen = 46, bodyR = 15;
+
+  // Stick legs (behind body).
+  ctx.strokeStyle = '#c76b39'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  const legSw = Math.sin(p.legPh) * 6 + (p.mode==='fly'?8:0);
+  drawLimb(-4, bodyR+2, -10 - legSw*0.3, bodyR+26, -8, bodyR+40);   // left leg + foot
+  drawLimb( 6, bodyR+2,  12 + legSw*0.3, bodyR+26, 14, bodyR+40);   // right leg + foot
+
+  // Sausage body (vertical capsule).
+  const grad = ctx.createLinearGradient(-bodyR, 0, bodyR, 0);
+  grad.addColorStop(0, '#c76b39'); grad.addColorStop(0.5, '#e0824a'); grad.addColorStop(1, '#c76b39');
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = '#a4531f'; ctx.lineWidth = 3;
+  roundCapsule(0, 0, bodyR, bodyLen);
+  ctx.fill(); ctx.stroke();
+  // Sausage links (little pinches).
+  ctx.strokeStyle = 'rgba(140,70,30,0.5)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-bodyR+3, -6); ctx.quadraticCurveTo(0,-2,bodyR-3,-6); ctx.stroke();
+
+  // Stick arms — reach up to the rope when swinging, flail when flying.
+  ctx.strokeStyle = '#c76b39'; ctx.lineWidth = 4;
+  if (p.mode === 'swing'){
+    drawLimb(-8, -bodyLen*0.28, -6, -bodyLen*0.55, 0, -bodyLen*0.7);
+    drawLimb( 8, -bodyLen*0.28,  6, -bodyLen*0.55, 0, -bodyLen*0.7);
+  } else {
+    const a = Math.sin(p.legPh*1.3)*10;
+    drawLimb(-8, -bodyLen*0.25, -18, -bodyLen*0.4 - a, -22, -bodyLen*0.3 - a);
+    drawLimb( 8, -bodyLen*0.25,  18, -bodyLen*0.4 + a,  22, -bodyLen*0.3 + a);
+  }
+
+  // Face near the top of the sausage.
+  drawFace(0, -bodyLen*0.34, p.face);
+
+  // Frying pan in hand when armed.
+  if (game.armed){
+    ctx.save(); ctx.translate(14, -bodyLen*0.3); ctx.rotate(-0.5);
+    drawPanIcon(0, 0, 0.8); ctx.restore();
+  }
+
+  ctx.restore();
+}
+function drawLimb(x1,y1,x2,y2,x3,y3){
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.stroke();
+  // little foot/hand dot
+  ctx.fillStyle = '#7a3d16'; ctx.beginPath(); ctx.arc(x3,y3,3.2,0,6.29); ctx.fill();
+}
+function roundCapsule(cx, cy, r, len){
+  const half = len/2;
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy - half + r);
+  ctx.arc(cx, cy - half + r, r, Math.PI, 0);
+  ctx.lineTo(cx + r, cy + half - r);
+  ctx.arc(cx, cy + half - r, r, 0, Math.PI);
+  ctx.closePath();
+}
+function drawFace(x, y, mood){
+  // Eyes.
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(x-6, y, 5, 0, 6.29); ctx.arc(x+6, y, 5, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#222';
+  const look = mood === 'worried' ? 1.5 : 0;
+  ctx.beginPath(); ctx.arc(x-6, y+look, 2.4, 0, 6.29); ctx.arc(x+6, y+look, 2.4, 0, 6.29); ctx.fill();
+  // Brows / mouth by mood.
+  ctx.strokeStyle = '#3a1e0d'; ctx.lineWidth = 2; ctx.lineCap='round';
+  ctx.beginPath();
+  if (mood === 'happy'){ ctx.moveTo(x-8, y+9); ctx.quadraticCurveTo(x, y+15, x+8, y+9); }
+  else if (mood === 'ooh'){ ctx.arc(x, y+11, 3.2, 0, 6.29); }
+  else { ctx.moveTo(x-7, y+12); ctx.quadraticCurveTo(x, y+7, x+7, y+12); } // worried frown
+  ctx.stroke();
+  // Rosy cheeks.
+  ctx.fillStyle = 'rgba(255,120,90,0.35)';
+  ctx.beginPath(); ctx.arc(x-11, y+5, 3, 0, 6.29); ctx.arc(x+11, y+5, 3, 0, 6.29); ctx.fill();
+}
+
+function drawMonkey(m){
+  const bob = Math.sin(game.t*0.1 + m.face*6)*2;
+  ctx.save(); ctx.translate(m.x, m.y - 14 + bob);
+  // Tail.
+  ctx.strokeStyle = '#6b4a2f'; ctx.lineWidth = 4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(6, 6); ctx.quadraticCurveTo(22, 4, 20, -12); ctx.stroke();
+  // Body.
+  ctx.fillStyle = '#7a5334';
+  ctx.beginPath(); ctx.ellipse(0, 4, 12, 14, 0, 0, 6.29); ctx.fill();
+  // Head.
+  ctx.beginPath(); ctx.arc(0, -12, 11, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#d9b892';
+  ctx.beginPath(); ctx.ellipse(0, -9, 7, 8, 0, 0, 6.29); ctx.fill();
+  // Ears.
+  ctx.fillStyle = '#7a5334';
+  ctx.beginPath(); ctx.arc(-11, -14, 4.5, 0, 6.29); ctx.arc(11, -14, 4.5, 0, 6.29); ctx.fill();
+  // Eyes.
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(-3, -12, 1.8, 0, 6.29); ctx.arc(3, -12, 1.8, 0, 6.29); ctx.fill();
+  // A held banana (menacing).
+  ctx.restore();
+}
+
+function drawBanana(b){
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.spin);
+  ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#c99a00'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-8, 4); ctx.quadraticCurveTo(0, -10, 10, 2);
+  ctx.quadraticCurveTo(2, 2, -8, 4);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#5a3d0a'; ctx.fillRect(9, 0, 3, 2);
+  ctx.restore();
+}
+
+function drawPan(x, y){
+  ctx.save(); ctx.translate(x, y);
+  // Glow ring so it reads as a pickup.
+  ctx.strokeStyle = 'rgba(255,240,150,0.8)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, 0, 24 + Math.sin(game.t*0.15)*3, 0, 6.29); ctx.stroke();
+  drawPanIcon(0, 0, 1.15);
+  ctx.restore();
+}
+function drawPanIcon(x, y, s){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(9, 2); ctx.lineTo(22, 8); ctx.stroke();   // handle
+  ctx.fillStyle = '#3a3a3a';
+  ctx.beginPath(); ctx.arc(0, 0, 12, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#565656';
+  ctx.beginPath(); ctx.arc(0, 0, 8, 0, 6.29); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- HUD ---------- */
+function drawHUD(){
+  // Lives as little sausages, top-left.
+  for (let i = 0; i < 3; i++){
+    const x = 24 + i*28, y = 34;
+    ctx.globalAlpha = i < game.lives ? 1 : 0.22;
+    ctx.save(); ctx.translate(x, y); ctx.scale(0.5, 0.5);
+    ctx.fillStyle = '#e0824a'; ctx.strokeStyle = '#a4531f'; ctx.lineWidth = 4;
+    roundCapsule(0, 0, 15, 40); ctx.fill(); ctx.stroke();
+    drawFace(0, -8, 'happy');
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+  // Score + level, top-right.
+  ctx.fillStyle = '#1e3a2e'; ctx.textAlign = 'right';
+  ctx.font = 'bold 26px system-ui';
+  ctx.fillText('LVL ' + game.level, VW-16, 34);
+  ctx.font = 'bold 16px system-ui'; ctx.fillStyle = '#2a4a3a';
+  ctx.fillText('Cleared: ' + game.score + '   Best: ' + game.best, VW-16, 56);
+
+  // Armed indicator.
+  if (game.armed){
+    ctx.save(); ctx.translate(VW-30, 84); drawPanIcon(0,0,0.9); ctx.restore();
+    ctx.textAlign='right'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 13px system-ui';
+    ctx.fillText('armed!', VW-46, 88);
+  }
+  // Pan pickup toast.
+  if (game.panMsg > 0){
+    ctx.globalAlpha = clamp(game.panMsg/40, 0, 1);
+    ctx.textAlign='center'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 20px system-ui';
+    ctx.fillText('🍳 Frying pan! Swing into monkeys to WHACK them', VW/2, VH*0.24);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- Full-screen overlays ---------- */
+function drawOverlays(){
+  ctx.setTransform(scale*dpr, 0, 0, scale*dpr, offX*dpr, offY*dpr);
+  ctx.save(); ctx.beginPath(); ctx.rect(0,0,VW,VH); ctx.clip();
+  ctx.textAlign = 'center';
+
+  if (game.state === S.MENU){
+    panel();
+    title('SAUSAGE SWING', VH*0.30);
+    // A big mascot.
+    ctx.save(); ctx.translate(VW/2, VH*0.44); ctx.scale(1.6,1.6);
+    const savep = player;
+    player = { mode:'swing', ax:0, ay:-90, x:0, y:0, vx:0, vy:0, legPh:game.t*0.1, r:15, face:'happy' };
+    game.armed_backup = game.armed; game.armed = false;
+    drawPlayer(player); game.armed = game.armed_backup; player = savep;
+    ctx.restore();
+    body([
+      'HOLD to grab a vine and swing.',
+      'LET GO to fly to the next tree.',
+      'Reach the far cliff. Dodge bananas!',
+      'Every 3rd level grab the 🍳 to whack monkeys.',
+    ], VH*0.58);
+    cta('TAP TO PLAY', VH*0.80);
+    if (game.best>0){ ctx.fillStyle='#eaf6ef'; ctx.font='bold 18px system-ui'; ctx.fillText('Best: '+game.best+' levels', VW/2, VH*0.87); }
+  }
+  else if (game.state === S.OVER){
+    panel();
+    title('GAME OVER', VH*0.34);
+    ctx.fillStyle='#fff'; ctx.font='bold 30px system-ui';
+    ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'), VW/2, VH*0.46);
+    ctx.fillStyle='#ffe27a'; ctx.font='bold 20px system-ui';
+    ctx.fillText('Best: '+game.best, VW/2, VH*0.52);
+    cta('TAP TO TRY AGAIN', VH*0.68);
+  }
+  else if (game.state === S.CLEAR){
+    ctx.fillStyle = 'rgba(255,255,255,0.0)';
+    ctx.fillStyle='#1e5631'; ctx.font='bold 40px system-ui';
+    ctx.strokeStyle='#fff'; ctx.lineWidth=5;
+    ctx.strokeText('LEVEL '+game.level+' CLEAR!', VW/2, VH*0.35);
+    ctx.fillText('LEVEL '+game.level+' CLEAR!', VW/2, VH*0.35);
+  }
+  else if (game.state === S.DYING){
+    ctx.fillStyle='rgba(120,20,10,0.25)'; ctx.fillRect(0,0,VW,VH);
+    ctx.fillStyle='#fff'; ctx.font='bold 30px system-ui';
+    ctx.fillText('Ouch! Lives left: '+game.lives, VW/2, VH*0.4);
+  }
+  ctx.restore();
+}
+function panel(){ ctx.fillStyle='rgba(16,30,26,0.72)'; ctx.fillRect(0,0,VW,VH); }
+function title(txt, y){
+  ctx.fillStyle='#ffd23f'; ctx.font='bold 44px system-ui';
+  ctx.strokeStyle='#7a3d16'; ctx.lineWidth=6; ctx.lineJoin='round';
+  ctx.strokeText(txt, VW/2, y); ctx.fillText(txt, VW/2, y);
+}
+function body(lines, y){
+  ctx.fillStyle='#eaf6ef'; ctx.font='17px system-ui';
+  lines.forEach((l,i)=> ctx.fillText(l, VW/2, y + i*26));
+}
+function cta(txt, y){
+  const w = 260, h = 58, x = VW/2 - w/2;
+  const pulse = 1 + Math.sin(game.t*0.12)*0.03;
+  ctx.save(); ctx.translate(VW/2, y); ctx.scale(pulse, pulse); ctx.translate(-VW/2, -y);
+  ctx.fillStyle='#ffd23f'; roundRect(x, y-h/2, w, h, 16); ctx.fill();
+  ctx.fillStyle='#7a3d16'; ctx.font='bold 24px system-ui'; ctx.textAlign='center';
+  ctx.fillText(txt, VW/2, y+8);
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+
+/* ============================================================================
+   MAIN LOOP — fixed-timestep physics, render once per frame.
+   ========================================================================== */
+let acc = 0, last = 0;
+const STEP = 1000/60;
+function frame(now){
+  if (!last) last = now;
+  let dt = now - last; last = now;
+  if (dt > 250) dt = 250;         // avoid spiral after tab-away
+  acc += dt;
+  let guard = 0;
+  while (acc >= STEP && guard++ < 6){ step(); acc -= STEP; }
+  render();
+  requestAnimationFrame(frame);
+}
+
+// Boot on the menu with a gently-swinging mascot backdrop.
+clouds = makeClouds();
+level = genLevel(1);
+anchors = level.anchors; trees = level.trees; monkeys = []; bananas = []; particles = [];
+player = { x: CLIFF_W-40, y: CLIFF_TOP, vx:0, vy:0, mode:'stand', ax:0, ay:0, L:0, face:'happy', legPh:0, r:15 };
+requestAnimationFrame(frame);
+
+// Register the service worker for offline / installable play.
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+
+</script>
+</body>
+</html>
