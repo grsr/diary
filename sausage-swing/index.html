@@ -108,12 +108,38 @@ const game = {
   best: +(localStorage.getItem('sausageBest') || 0),
   coins: 0,                       // mini-sausages banked this run
   camX: 0, shake: 0, t: 0, timer: 0,
-  armed: false, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1,
+  armed: false, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false,
 };
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
     coins, birds, coconuts, spikes, boss, floatTexts;
 let runSeed = 0x5eed1;           // randomized each new game so every run differs
+
+/* ---------- Online leaderboard (Supabase REST) ---------- */
+const SUPA_URL = 'https://axrnphdvytqgzuqvdymr.supabase.co';
+const SUPA_KEY = 'sb_publishable_qyfqIQo0NQ3c5q_tGdqjHg_uZUBGtro';
+const SUPA_ON  = !!(SUPA_URL && SUPA_KEY);
+let onlineScores = null;         // null | 'loading' | 'error' | [{name,score},...]
+function supaHeaders(){ return { 'apikey':SUPA_KEY, 'Authorization':'Bearer '+SUPA_KEY, 'Content-Type':'application/json' }; }
+function fetchWithTimeout(url, opts, ms){
+  const ctl = new AbortController(), to = setTimeout(()=>ctl.abort(), ms||6000);
+  return fetch(url, Object.assign({}, opts, { signal: ctl.signal })).finally(()=>clearTimeout(to));
+}
+function fetchBoard(){
+  if (!SUPA_ON){ onlineScores='error'; return; }
+  onlineScores = 'loading';
+  fetchWithTimeout(SUPA_URL+'/rest/v1/scores?select=name,score&order=score.desc&limit=20', { headers: supaHeaders() })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rows => { onlineScores = Array.isArray(rows) ? rows : []; })
+    .catch(() => { onlineScores = 'error'; });
+}
+function submitScore(name, score){
+  if (!SUPA_ON || !(score > 0)) return Promise.resolve();
+  return fetchWithTimeout(SUPA_URL+'/rest/v1/scores', { method:'POST',
+      headers: Object.assign(supaHeaders(), { 'Prefer':'return=minimal' }),
+      body: JSON.stringify({ name: String(name||'YOU').slice(0,12), score }) }, 6000)
+    .then(()=>{}).catch(()=>{});
+}
 
 /* ---------- Saved progress (resume at the level you reached) ---------- */
 function saveProgress(){ try { localStorage.setItem('sausageSave', JSON.stringify({ level:game.level, score:game.score, lives:game.lives, coins:game.coins, seed:runSeed })); } catch(_){} }
@@ -169,7 +195,7 @@ function onDown(e){
   e.preventDefault();
   pointers.set(e.pointerId, toWorld(e.clientX, e.clientY));
   startAudio(); requestMotion();
-  if (game.state === S.MENU){ menuTap(e.clientX, e.clientY); return; }
+  if (game.state === S.MENU){ if (game.viewBoard){ game.viewBoard=false; return; } menuTap(e.clientX, e.clientY); return; }
   if (game.state === S.OVER){ startRun(); return; }
   if (game.state === S.BOSS){ bossPress(e.pointerId, e.clientX, e.clientY); return; }
   if (game.state !== S.PLAY) return;
@@ -204,10 +230,9 @@ function bossPress(id, cx, cy){
 function bossJump(){ if (player.onGround){ player.vy = -JUMP_V; player.onGround=false; player.mode='fly'; blip(500,0.05); } }
 function menuTap(cx, cy){
   const v = toScreen(cx, cy);
-  // Tap the nickname line to change it.
-  if (v.y > VH*0.945-18 && v.y < VH*0.945+14 && Math.abs(v.x-VW/2) < 160){ openNick(); return; }
-  // "New game" pill sits just below the main button when a save exists.
-  if (hasSave() && v.y > VH*0.855-20 && v.y < VH*0.855+22 && Math.abs(v.x-VW/2) < 95){ clearProgress(); startRun(); return; }
+  if (v.y > VH*0.95-18 && v.y < VH*0.95+14 && Math.abs(v.x-VW/2) < 160){ openNick(); return; }          // nickname
+  if (v.y > VH*0.895-20 && v.y < VH*0.895+20 && Math.abs(v.x-VW/2) < 105){ game.viewBoard=true; fetchBoard(); return; }  // leaderboard
+  if (hasSave() && v.y > VH*0.835-20 && v.y < VH*0.835+20 && Math.abs(v.x-VW/2) < 95){ clearProgress(); startRun(); return; }  // new game
   if (hasSave()) continueRun(); else startRun();
 }
 cvs.addEventListener('pointerdown', onDown, {passive:false});
@@ -369,7 +394,7 @@ function genLevel(n){
 /* ============================================================================
    LIFECYCLE
    ========================================================================== */
-function startRun(){ clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
+function startRun(){ clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.viewBoard=false; runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
 function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
 function loadLevel(n){
@@ -401,7 +426,8 @@ function loseLife(reason){
   if (game.lives <= 0){
     game.state = S.OVER; game.timer = 0; clearProgress();
     if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
-    recordGameOver();
+    recordGameOver();                                   // local table
+    submitScore(getName(), game.score).then(fetchBoard); // online table + refresh
   } else { game.state = S.DYING; game.timer = 40; }
 }
 
@@ -952,31 +978,32 @@ function drawOverlays(){
   ctx.setTransform(scale*dpr,0,0,scale*dpr,offX*dpr,offY*dpr);
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,VW,VH); ctx.clip(); ctx.textAlign='center';
   if(game.state===S.MENU){
-    panel(); title('SAUSAGE SWING',VH*0.24);
-    ctx.save(); ctx.translate(VW/2,VH*0.38); ctx.scale(1.5,1.5);
+    if(game.viewBoard){ drawBoardScreen(); ctx.restore(); return; }
+    panel(); title('SAUSAGE SWING',VH*0.22);
+    ctx.save(); ctx.translate(VW/2,VH*0.35); ctx.scale(1.45,1.45);
     const sp=player; player={mode:'swing',ax:0,ay:-90,x:0,y:0,vx:0,vy:0,legPh:game.t*0.1,r:15,face:'happy',iframe:0};
     const a=game.armed; game.armed=false; drawPlayer(player); game.armed=a; player=sp; ctx.restore();
-    body(['Tap a TREETOP to grab it & swing.','Let go to fly to the next tree.','SHAKE the phone to swing higher.','Two fingers to climb up the rope.','Grab 🌭 mini-sausages & the 🍳 pan —','beat the 🦍 GORILLA every 3rd level!'],VH*0.51);
+    body(['Tap a TREETOP to grab it & swing.','Let go to fly to the next tree.','SHAKE the phone to swing higher.','Two fingers to climb up the rope.','Grab 🌭 mini-sausages & the 🍳 pan —','beat the 🦍 GORILLA every 3rd level!'],VH*0.48);
     if(hasSave()){
       const s=loadProgress();
-      cta('CONTINUE • Lvl '+s.level, VH*0.80);
-      // "New game" pill
-      ctx.fillStyle='rgba(255,255,255,0.15)'; roundRect(VW/2-90,VH*0.855-16,180,34,17); ctx.fill();
-      ctx.fillStyle='#eaf6ef'; ctx.font='bold 16px system-ui'; ctx.textAlign='center'; ctx.fillText('Start a new game',VW/2,VH*0.855+6);
+      cta('CONTINUE • Lvl '+s.level, VH*0.78);
+      ctx.fillStyle='rgba(255,255,255,0.15)'; roundRect(VW/2-90,VH*0.835-16,180,32,16); ctx.fill();
+      ctx.fillStyle='#eaf6ef'; ctx.font='bold 15px system-ui'; ctx.textAlign='center'; ctx.fillText('Start a new game',VW/2,VH*0.835+5);
     } else {
-      cta('TAP TO PLAY',VH*0.82);
-      if(game.best>0){ ctx.fillStyle='#eaf6ef'; ctx.font='bold 18px system-ui'; ctx.fillText('Best: '+game.best+' levels',VW/2,VH*0.89); }
+      cta('TAP TO PLAY',VH*0.79);
     }
+    // Leaderboard button
+    ctx.fillStyle='#ffd23f'; roundRect(VW/2-100,VH*0.895-19,200,38,19); ctx.fill();
+    ctx.fillStyle='#7a3d16'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText('🏆 Leaderboard',VW/2,VH*0.895+6);
     // nickname (tap to change)
-    ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='bold 15px system-ui';
-    ctx.fillText('👤 '+(getName()||'tap to set your name')+'   ✎', VW/2, VH*0.945);
+    ctx.fillStyle='#cfe0d8'; ctx.font='bold 15px system-ui'; ctx.fillText('👤 '+(getName()||'tap to set your name')+'   ✎', VW/2, VH*0.95);
   } else if(game.state===S.OVER){
-    panel(); title('GAME OVER',VH*0.16);
-    ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 24px system-ui';
-    ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'),VW/2,VH*0.25);
-    ctx.fillStyle='#ffd23f'; ctx.font='bold 20px system-ui'; ctx.fillText('🏆 HIGH SCORES',VW/2,VH*0.33);
-    drawScoreList(VH*0.38, 8);
-    cta('TAP TO TRY AGAIN',VH*0.88);
+    panel(); title('GAME OVER',VH*0.13);
+    ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 22px system-ui';
+    ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'),VW/2,VH*0.205);
+    ctx.fillStyle='#ffd23f'; ctx.font='bold 19px system-ui'; ctx.fillText(SUPA_ON?'🏆 LEADERBOARD':'🏆 HIGH SCORES',VW/2,VH*0.275);
+    drawBoard(VH*0.33, 9);
+    cta('TAP TO TRY AGAIN',VH*0.9);
   } else if(game.state===S.CLEAR){
     ctx.fillStyle='#1e5631'; ctx.font='bold 40px system-ui'; ctx.strokeStyle='#fff'; ctx.lineWidth=5;
     ctx.strokeText('LEVEL '+game.level+' CLEAR!',VW/2,VH*0.35); ctx.fillText('LEVEL '+game.level+' CLEAR!',VW/2,VH*0.35);
@@ -999,6 +1026,35 @@ function drawScoreList(y0, count){
     ctx.textAlign='right'; ctx.fillText(String(s.score), VW/2+128, y);
   }
   ctx.textAlign='center';
+}
+function drawRows(rows, y0, count, hiName, hiScore){
+  const lh = 27;
+  if(!rows || rows.length===0){ ctx.textAlign='center'; ctx.fillStyle='#aeb8b4'; ctx.font='16px system-ui'; ctx.fillText('No scores yet — be the first!', VW/2, y0+10); return; }
+  let hiDone=false;
+  for(let i=0;i<Math.min(count,rows.length);i++){
+    const s=rows[i], y=y0+i*lh;
+    const hi = !hiDone && hiName!=null && String(s.name)===String(hiName) && s.score===hiScore;
+    if(hi){ hiDone=true; ctx.fillStyle='rgba(255,210,63,0.18)'; roundRect(VW/2-135,y-18,270,24,6); ctx.fill(); }
+    ctx.fillStyle=hi?'#ffd23f':'#eaf6ef'; ctx.font=(hi?'bold ':'')+'18px system-ui';
+    ctx.textAlign='left';  ctx.fillText((i+1)+'.', VW/2-128, y); ctx.fillText(String(s.name).slice(0,10), VW/2-104, y);
+    ctx.textAlign='right'; ctx.fillText(String(s.score), VW/2+128, y);
+  }
+  ctx.textAlign='center';
+}
+// Online board when configured, with a graceful fall back to this device.
+function drawBoard(y0, count){
+  if(SUPA_ON){
+    if(onlineScores===null || onlineScores==='loading'){ ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='16px system-ui'; ctx.fillText('Loading leaderboard…', VW/2, y0+10); return; }
+    if(onlineScores==='error'){ ctx.textAlign='center'; ctx.fillStyle='#e6b0a0'; ctx.font='14px system-ui'; ctx.fillText('Offline — showing this device', VW/2, y0-8); drawScoreList(y0+18, count); return; }
+    drawRows(onlineScores, y0, count, getName(), game.score); return;
+  }
+  drawScoreList(y0, count);
+}
+function drawBoardScreen(){
+  panel(); title('LEADERBOARD',VH*0.12);
+  ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='14px system-ui'; ctx.fillText('Top players everywhere', VW/2, VH*0.16);
+  drawBoard(VH*0.22, 15);
+  ctx.textAlign='center'; ctx.fillStyle='#ffd23f'; ctx.font='bold 16px system-ui'; ctx.fillText('tap to go back', VW/2, VH*0.95);
 }
 function panel(){ ctx.fillStyle='rgba(16,30,26,0.74)'; ctx.fillRect(0,0,VW,VH); }
 function title(txt,y){ ctx.fillStyle='#ffd23f'; ctx.font='bold 42px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=6; ctx.lineJoin='round'; ctx.strokeText(txt,VW/2,y); ctx.fillText(txt,VW/2,y); }

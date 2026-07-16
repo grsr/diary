@@ -31,8 +31,12 @@ rope, and **P** does a swing pump (stands in for shaking).
   level. Run out and it's game over (your best score is saved on the device).
 - **Progress is saved** at the start of every level, so you can close the app
   and pick up where you left off — the menu shows a **Continue** button.
-- **High scores** are kept on the device (top 10, with names). Beat one and you
-  get to enter your name; the game-over screen shows the ranked table.
+- **Nickname + leaderboard.** The game asks for a nickname once (stored on the
+  device) and posts your score to a shared **online leaderboard** (Supabase).
+  The menu has a **🏆 Leaderboard** button (global top 20) and the game-over
+  screen shows the board with your entry highlighted. If there's no network it
+  falls back to an on-device top-10. The Supabase `anon` key is public by design
+  and safe to ship; the table only allows read + insert (no edit/delete).
 
 ## Levels
 

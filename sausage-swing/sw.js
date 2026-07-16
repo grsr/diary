@@ -1,6 +1,6 @@
 /* Sausage Swing service worker — offline app shell so it plays with no network
    once installed to the home screen. */
-const CACHE = 'sausage-swing-v8';
+const CACHE = 'sausage-swing-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -24,6 +24,9 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
+  // Let cross-origin requests (e.g. the Supabase leaderboard) go straight to the
+  // network — never cache them, or scores would go stale.
+  if (new URL(req.url).origin !== self.location.origin) return;
   // Network-first for the HTML so updates land; cache-first for everything else.
   if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
     e.respondWith(
