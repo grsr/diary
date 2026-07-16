@@ -27,22 +27,26 @@ rope, and **P** does a swing pump (stands in for shaking).
 ## The rules
 
 - **Score** = how many levels you clear.
-- **3 lives.** Getting hit or falling costs a life and restarts the current
+- **5 lives.** Getting hit or falling costs a life and restarts the current
   level. Run out and it's game over (your best score is saved on the device).
+- **Progress is saved** at the start of every level, so you can close the app
+  and pick up where you left off — the menu shows a **Continue** button.
 - **Mini-sausages** 🌭 are scattered along the way like coins. Grab them — each
   one becomes a **monkey helper** in the next boss fight (up to 6).
 - **Every 3rd level is a boss level.** A 🍳 **frying pan** floats on the path —
-  grab it, because reaching the far cliff triggers a **gorilla boss fight**.
-  Swing into the gorilla with the pan to **whack** it; your monkey helpers pelt
-  it with bananas; and if you missed the pan you can still bop it on the head.
-  Meanwhile dodge its **barrels** and **falling coconuts**.
+  grab it, because reaching the finish triggers a **gorilla boss fight**. The
+  boss uses **on-screen ◀ ▶ / JUMP buttons**: walk up and whack the gorilla
+  with the pan (or jump on its head if you missed the pan). Your monkey helpers
+  pelt it with bananas — one helper per mini-sausage you collected. Dodge its
+  **barrels** (jump over them) and its **falling coconuts**.
 
 ## Hazards
 
 - **Monkeys** in the trees throw **bananas**.
 - **Birds** patrol the sky.
+- **Spiky blocks** float in the sky — swing around them.
 - **Coconut trees** drop coconuts as you pass under them.
-- **Gorilla boss** (every 3rd level): barrels + coconut rain.
+- **Gorilla boss** (every 3rd level): rolling barrels + coconut rain.
 
 ## Difficulty
 
