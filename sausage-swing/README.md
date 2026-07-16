@@ -34,11 +34,12 @@ rope, and **P** does a swing pump (stands in for shaking).
 - **Mini-sausages** 🌭 are scattered along the way like coins. Grab them — each
   one becomes a **monkey helper** in the next boss fight (up to 6).
 - **Every 3rd level is a boss level.** A 🍳 **frying pan** floats on the path —
-  grab it, because reaching the finish triggers a **gorilla boss fight**. The
-  boss uses **on-screen ◀ ▶ / JUMP buttons**: walk up and whack the gorilla
-  with the pan (or jump on its head if you missed the pan). Your monkey helpers
-  pelt it with bananas — one helper per mini-sausage you collected. Dodge its
-  **barrels** (jump over them) and its **falling coconuts**.
+  grab it, because reaching the finish triggers a **gorilla boss fight**. Move
+  with the **on-screen ◀ ▶ / JUMP buttons** or **tap a vine to swing in**, and
+  whack the gorilla with the pan (or jump on its head if you missed the pan).
+  Your monkey helpers pelt it with bananas — one helper per mini-sausage you
+  collected. Dodge its barrels (jump over them) and its falling coconuts. A hit
+  only restarts the **boss**, not the whole level, so you keep chipping away.
 
 ## Hazards
 
