@@ -63,11 +63,16 @@ also picks a randomized height "shape" so the treetops climb, dip, or zig-zag.
 - **Birds** patrol the sky.
 - **Spiky blocks** sit in the swing path — some patrol side-to-side, some bob.
 - **Bees** (from level 4) slowly chase you — swing away to lose them.
+- **Moving vines** (from level 6) drift side-to-side.
+- **Gusty wind** (from level 8) nudges you through the air.
 - **Coconut trees** drop coconuts as you pass under them.
+- **Golden invincibility banana** — grab it for a few seconds of invincibility
+  (glow around the sausage); great for getting past a tricky bit.
 - **Gorilla boss** (every 3rd level): rolling barrels + coconut rain, and it
   gets tougher (more HP, faster/heavier attacks) each boss. You can't slip
-  behind it. The frying pan **breaks after 2 whacks**, and each monkey helper
-  lobs **one** banana then scurries off — so you'll need head-bops too.
+  behind it, and you can only hurt it by **swinging into it** (walking/jumping
+  does nothing). The frying pan makes swing-hits do double damage but **breaks
+  after 2**, and each monkey helper lobs **one** banana then scurries off.
 
 ## Difficulty
 

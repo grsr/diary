@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v11';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v12';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -114,7 +114,7 @@ const game = {
 const LBBTN = { x:34, y:VH-48, r:26 };   // in-play "view leaderboard" button (bottom-left)
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
-    coins, birds, coconuts, spikes, bees, boss, floatTexts;
+    coins, birds, coconuts, spikes, bees, powerups, boss, floatTexts;
 let runSeed = 0x5eed1;           // randomized each new game so every run differs
 
 /* ---------- Online leaderboard (Supabase REST) ---------- */
@@ -338,8 +338,11 @@ function genLevel(n){
     y = clamp(y, bandLo - 10, bandHi + 30);
     y = clamp(y, prevY - 150, prevY + 150);      // keep the next vine reachable
     prevY = y;
-    A.push({ x, y });
-    T.push({ x, top: y, sway: rng() * 6.28, w: 16 + rng()*8, coconut: rng() < 0.4 && n >= 2, cd: 60 + rng()*120 });
+    // From level 6, some treetops drift side-to-side (moving vines).
+    const moving = n >= 6 && i > 0 && rng() < Math.min(0.14 + (n-6)*0.03, 0.5);
+    const a = { x, y, baseX:x, mv: moving ? (26 + rng()*34) : 0, mph: rng()*6.28, mvs: 0.012 + rng()*0.016 };
+    A.push(a);
+    T.push({ x, top: y, anchor:a, sway: rng() * 6.28, w: 16 + rng()*8, coconut: rng() < 0.4 && n >= 2, cd: 60 + rng()*120 });
     x += spacing * (0.82 + rng() * 0.5);          // varied gap rhythm
     i++;
   }
@@ -401,6 +404,18 @@ function genLevel(n){
     BE.push({ x:bx, y:240 + rng()*180, vx:0, vy:0, wing:rng()*6.28, spd:0.9 + Math.min(n*0.05, 0.9) });
   }
 
+  // Invincibility banana — a golden banana that makes you invincible for a few
+  // seconds. Handy when you're stuck. About one per level, on the swing path.
+  const PW = [];
+  if (A.length > 3){
+    const ai = 2 + ((rng() * (A.length - 3)) | 0);
+    const a = A[Math.min(ai, A.length - 2)];
+    PW.push({ x:a.x + (rng()-0.5)*40, y:a.y + 95 + rng()*70, got:false, bob:rng()*6.28 });
+  }
+
+  // From level 8, gusty wind nudges you in the air (drifts your flight).
+  const wind = n >= 8 ? (0.05 + Math.min((n-8)*0.006, 0.06)) : 0;
+
   const isBoss = (n % 3 === 0);
   // Frying pan on boss levels (you need it for the gorilla).
   let P = null;
@@ -408,7 +423,7 @@ function genLevel(n){
     const a = A[(A.length/2)|0];
     P = { x:a.x + spacing*0.4, y:a.y + 120, got:false, bob:0 };
   }
-  return { n, len:levelLen, endCliffX, anchors:A, trees:T, monkeys:M, coins:C, birds:B, spikes:SP, bees:BE, pan:P, boss:isBoss, bossDone:false };
+  return { n, len:levelLen, endCliffX, anchors:A, trees:T, monkeys:M, coins:C, birds:B, spikes:SP, bees:BE, powerups:PW, wind, pan:P, boss:isBoss, bossDone:false };
 }
 
 /* ============================================================================
@@ -421,14 +436,14 @@ function loadLevel(n){
   game.level = n;
   level   = genLevel(n);
   anchors = level.anchors; trees = level.trees; monkeys = level.monkeys;
-  coins   = level.coins;   birds = level.birds; pan = level.pan; spikes = level.spikes; bees = level.bees;
+  coins   = level.coins;   birds = level.birds; pan = level.pan; spikes = level.spikes; bees = level.bees; powerups = level.powerups;
   bananas = []; particles = []; coconuts = []; floatTexts = []; boss = null;
   clouds = clouds || makeClouds();
   game.armed = false; game.camX = 0; game.state = S.PLAY; game.timer = 0; game.panMsg = 0;
   game.arena = false; game.hint = n === 1 ? 260 : 0; game.paused = false;
   grappleId = null; pointers.clear(); pointerBtn.clear(); recomputeBtns();
   player = { x:CLIFF_W-40, y:CLIFF_TOP-STAND_DY, vx:0, vy:0, mode:'stand',
-             ax:0, ay:0, L:0, curA:null, iframe:0, face:'happy', legPh:0, r:15, onGround:true };
+             ax:0, ay:0, L:0, curA:null, iframe:0, invuln:0, face:'happy', legPh:0, r:15, onGround:true };
   saveProgress();            // checkpoint at the start of every level
 }
 function retryLevel(){ loadLevel(game.level); }
@@ -439,6 +454,7 @@ function nextLevel(){
 }
 function loseLife(reason){
   if (game.state !== S.PLAY && game.state !== S.BOSS) return;
+  if (player.invuln > 0 && reason !== 'fall') return;   // invincible: shrug off hazards (but not falling)
   game.diedInBoss = (game.state === S.BOSS);   // a boss hit re-fights only the boss
   game.lives--; game.shake = 16;
   spawnSplat(player.x, player.y, reason==='banana'?'#ffd23f':'#c86b3a');
@@ -491,6 +507,7 @@ function clamp(v,a,b){ return v<a?a:v>b?b:v; }
 function integrate(p, opts){
   const climbing = p.mode === 'swing' && ([...pointers.keys()].some(k => k !== grappleId) || keysDown.has('ArrowUp'));
   if (p.mode === 'swing'){
+    if (p.curA){ p.ax = p.curA.x; p.ay = p.curA.y; }   // follow a moving vine's pivot
     if (climbing){ p.L = Math.max(CLIMB_MIN, p.L - CLIMB_SPEED); if (game.t % 6 === 0) blip(720,0.02); }
     p.vy += G; p.x += p.vx; p.y += p.vy;
     let dx=p.x-p.ax, dy=p.y-p.ay, d=Math.hypot(dx,dy)||1;
@@ -523,7 +540,11 @@ function step(){
   if (game.state !== S.PLAY){ updateParticles(); updateClouds(); return; }
 
   const p = player;
+  // Moving vines drift side-to-side.
+  for (const a of anchors){ if (a.mv) a.x = a.baseX + Math.sin(a.mph + game.t*a.mvs)*a.mv; }
   integrate(p);
+  // Gusty wind nudges you through the air.
+  if (level.wind && p.mode !== 'stand'){ p.vx += level.wind * Math.sin(game.t*0.006) * (p.mode==='swing'?0.4:1); }
 
   const targetCam = clamp(p.x - VW*0.36, 0, level.len - VW);
   game.camX += (targetCam - game.camX) * 0.12;
@@ -537,6 +558,12 @@ function step(){
   // Mini-sausages.
   for (const c of coins){ if (c.got) continue; c.bob += 0.1;
     if (Math.hypot(c.x-p.x, c.y-p.y) < 30){ c.got=true; game.coins++; blip(1040,0.06); spawnText(c.x,c.y-10,'+1','#ffd27a'); for(let i=0;i<6;i++) spawnSpark(c.x,c.y,'#e0824a'); } }
+
+  // Invincibility bananas.
+  if (p.invuln > 0) p.invuln--;
+  for (const g of powerups){ if (g.got) continue; g.bob += 0.09;
+    if (Math.hypot(g.x-p.x, g.y-p.y) < 32){ g.got=true; p.invuln = 360; blip(700,0.1); blip(1000,0.12);
+      spawnText(g.x, g.y-14, 'INVINCIBLE!', '#ffe27a'); for(let i=0;i<14;i++) spawnSpark(g.x,g.y,'#ffe27a'); } }
 
   // Monkeys throw bananas / get whacked.
   for (const m of monkeys){ if (!m.alive) continue;
@@ -623,8 +650,9 @@ function enterBoss(){
   };
   const helperN = Math.min(game.coins, HELPER_CAP);
   for (let i=0;i<helperN;i++) boss.helpers.push({ x:22+i*26, y:BOSS_FLOOR, cd:40+i*16, bob:i, gone:false });
-  // Swingable vines — all kept to the LEFT of the gorilla (you can't get behind it).
-  anchors = [ {x:VW*0.22, y:150}, {x:VW*0.38, y:120}, {x:VW*0.54, y:120}, {x:VW*0.70, y:150} ];
+  // Swingable vines — the right one is positioned so a good swing carries you
+  // into the gorilla. All kept left of it (you can't get behind).
+  anchors = [ {x:VW*0.24, y:150}, {x:VW*0.42, y:120}, {x:VW*0.58, y:120}, {x:VW*0.72, y:145} ];
   bananas = []; coconuts = []; particles = []; floatTexts = [];
   game.panUses = game.armed ? 2 : 0;              // pan breaks after 2 whacks
   player.x = 60; player.y = BOSS_STAND; player.vx=0; player.vy=0; player.mode='stand'; player.onGround=true; player.curA=null; player.iframe=60;
@@ -637,7 +665,7 @@ function updateBoss(){
   const p = player, b = boss, g = b.g;
   if (b.intro > 0) b.intro--;
 
-  const maxX = g.x - 26;   // can't get behind the gorilla — no safe corner
+  const maxX = g.x - 8;   // can't get behind the gorilla — no safe corner
   // ---- Movement: swing on a vine, or walk/jump with the D-pad ----
   if (p.mode === 'swing'){
     integrate(p);                                // pendulum + two-finger climb
@@ -660,6 +688,7 @@ function updateBoss(){
     if (p.iframe > 0) p.iframe--;
   }
 
+  if (p.invuln > 0) p.invuln--;
   if (g.iframe>0) g.iframe--;
   if (g.hurt>0) g.hurt--;
   g.anim += 0.05;
@@ -667,19 +696,18 @@ function updateBoss(){
   if (b.intro <= 0 && g.hp > 0){
     // Hit the gorilla: walk/jump into it with the pan, or bop its head if you
     // missed the pan. Either way you get knocked back so you re-approach.
-    if (g.iframe<=0){
-      const near = Math.abs(p.x-g.x) < 46;
-      const canPan = game.armed && game.panUses > 0;
-      const panHit  = canPan && near && p.y > g.y-118 && p.y < g.y+8;
-      const headBop = !canPan && !p.onGround && p.vy > 0.4 && Math.abs(p.x-g.x) < 36 && p.y < g.y-60 && p.y > g.y-120;
-      if (panHit || headBop){
-        g.hp--; g.iframe=26; g.hurt=18; game.shake=14; blip(320,0.09,'square');
-        spawnText(g.x, g.y-96, panHit?'WHACK!':'BONK!', '#fff'); for(let i=0;i<12;i++) spawnSpark(g.x,g.y-50,'#ffe27a');
-        if (p.mode==='swing'){ p.mode='fly'; grappleId=null; }   // let go on impact
-        if (panHit){ p.vx = Math.sign(p.x-g.x||-1)*7; p.vy = -6; p.onGround=false;
-          if (--game.panUses <= 0){ game.armed=false; spawnText(p.x, p.y-40, 'PAN BROKE!', '#e6b0a0'); blip(120,0.2,'sawtooth'); }
-        } else { p.vy = -JUMP_V*0.9; }
-        p.iframe=16;
+    // You can only hurt the gorilla by SWINGING into it at speed — walking or
+    // jumping into it does nothing (no more head-camping).
+    if (g.iframe<=0 && p.mode==='swing'){
+      const spd = Math.hypot(p.vx, p.vy);
+      const hit = spd > 5 && Math.abs(p.x-g.x) < 52 && p.y > g.y-120 && p.y < g.y+10;
+      if (hit){
+        const withPan = game.armed && game.panUses > 0;
+        g.hp -= withPan ? 2 : 1; g.iframe=24; g.hurt=18; game.shake=14; blip(320,0.09,'square');
+        spawnText(g.x, g.y-96, withPan?'WHACK! −2':'KICK! −1', '#fff'); for(let i=0;i<14;i++) spawnSpark(g.x,g.y-50,'#ffe27a');
+        p.mode='fly'; grappleId=null;                       // let go and bounce off
+        p.vx = Math.sign(p.x-g.x||-1)*8; p.vy = -6; p.onGround=false; p.iframe=14;
+        if (withPan && --game.panUses <= 0){ game.armed=false; spawnText(p.x, p.y-40, 'PAN BROKE!', '#e6b0a0'); blip(120,0.2,'sawtooth'); }
       }
     }
     // Gorilla attacks — faster and heavier the further you get (higher tier).
@@ -769,6 +797,16 @@ function drawParallax(){
   for(const c of clouds){ const x=c.x-game.camX*0.3, xx=((x%(VW+400))+(VW+400))%(VW+400)-200; cloud(xx,c.y,34*c.s); }
   hills(-game.camX*0.4, CLIFF_TOP+40, 0.6, '#8fd08a');
   hills(-game.camX*0.55+140, CLIFF_TOP+68, 0.8, '#79c47a');
+  // Wind streaks (from level 8) drifting in the current gust direction.
+  if (level && level.wind && (game.state===S.PLAY)){
+    const dir = Math.sin(game.t*0.006) >= 0 ? 1 : -1;
+    ctx.strokeStyle='rgba(255,255,255,0.28)'; ctx.lineWidth=2; ctx.lineCap='round';
+    for(let i=0;i<7;i++){
+      const yy = 80 + i*70 + (i*33 % 60);
+      const base = ((game.t*3*dir + i*140) % (VW+160) + (VW+160)) % (VW+160) - 80;
+      ctx.beginPath(); ctx.moveTo(base, yy); ctx.lineTo(base + dir*28, yy); ctx.stroke();
+    }
+  }
 }
 function cloud(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,6.29); ctx.arc(x+r,y+6,r*0.8,0,6.29); ctx.arc(x-r,y+6,r*0.8,0,6.29); ctx.arc(x+r*0.4,y-r*0.5,r*0.7,0,6.29); ctx.fill(); }
 function hills(off,y,amp,col){ ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(0,VH);
@@ -780,6 +818,7 @@ function drawWorld(){
   ctx.fillStyle=rav; ctx.fillRect(game.camX,CLIFF_TOP,VW,VH-CLIFF_TOP);
   for(const t of trees) drawTree(t);
   for(const c of coins) if(!c.got) drawCoin(c.x, c.y+Math.sin(c.bob)*5);
+  for(const g of powerups) if(!g.got) drawGolden(g.x, g.y+Math.sin(g.bob)*6);
   if(pan && !pan.got) drawPan(pan.x, pan.y+Math.sin(pan.bob)*6);
   drawCliff(0,CLIFF_W,true); drawCliff(level.endCliffX,CLIFF_W,false); drawFinishLine(level.endCliffX);
   for(const m of monkeys) if(m.alive) drawMonkey(m.x,m.y);
@@ -830,12 +869,14 @@ function drawFinishLine(x){
   roundRect(-30,-14,60,20,6); ctx.fill(); ctx.fillStyle='#20242b'; ctx.fillText('FINISH',0,0); ctx.restore();
 }
 function drawTree(t){
-  const sway=Math.sin(game.t*0.02+t.sway)*4;
+  // A moving vine's top tracks its (drifting) anchor.
+  const topX = t.anchor && t.anchor.mv ? t.anchor.x : t.x + Math.sin(game.t*0.02+t.sway)*4;
+  const sway = topX - t.x;
   ctx.strokeStyle='#6b4a2f'; ctx.lineWidth=t.w; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(t.x,VH+20); ctx.quadraticCurveTo(t.x-6,(VH+t.top)/2,t.x+sway,t.top); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(t.x,VH+20); ctx.quadraticCurveTo(t.x-6,(VH+t.top)/2,topX,t.top); ctx.stroke();
   ctx.lineWidth=7; ctx.beginPath(); ctx.moveTo(t.x,t.top+50); ctx.lineTo(t.x-30,t.top+30); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(t.x,t.top+80); ctx.lineTo(t.x+34,t.top+58); ctx.stroke();
-  const fx=t.x+sway, fy=t.top, fol=(cx,cy,r,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.arc(cx,cy,r,0,6.29);ctx.fill();};
+  const fx=topX, fy=t.top, fol=(cx,cy,r,c)=>{ctx.fillStyle=c;ctx.beginPath();ctx.arc(cx,cy,r,0,6.29);ctx.fill();};
   fol(fx-24,fy-6,30,'#2f8f3e'); fol(fx+24,fy-6,30,'#2f8f3e'); fol(fx,fy-30,34,'#3fa34d'); fol(fx-10,fy+6,26,'#37953f'); fol(fx+14,fy+2,24,'#43ad51');
   if(t.coconut){ ctx.fillStyle='#5a3d22'; ctx.beginPath(); ctx.arc(fx-12,fy+14,6,0,6.29); ctx.arc(fx+8,fy+16,6,0,6.29); ctx.fill(); }
   // grab knob (highlighted so kids can see where to tap)
@@ -847,7 +888,12 @@ function drawPlayer(p){
   if(p.mode==='swing'){ ctx.strokeStyle='#efe6c8'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(p.ax,p.ay); ctx.lineTo(p.x,p.y-6); ctx.stroke(); }
   let ang = p.mode==='swing' ? Math.atan2(p.y-p.ay,p.x-p.ax)-Math.PI/2 : p.mode==='fly' ? Math.atan2(p.vy,p.vx) : 0;
   ctx.save(); ctx.translate(p.x,p.y);
-  if(p.iframe>0 && Math.floor(game.t/4)%2===0) ctx.globalAlpha=0.5;
+  // Invincibility aura (flashes as it's about to run out).
+  if(p.invuln>0 && (p.invuln>90 || Math.floor(game.t/4)%2===0)){
+    const gr=ctx.createRadialGradient(0,0,10,0,0,42); gr.addColorStop(0,'rgba(255,230,120,0.55)'); gr.addColorStop(1,'rgba(255,230,120,0)');
+    ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(0,0,42,0,6.29); ctx.fill();
+  }
+  if(p.iframe>0 && p.invuln<=0 && Math.floor(game.t/4)%2===0) ctx.globalAlpha=0.5;
   ctx.rotate(p.mode==='stand'?0:clamp(ang,-1.2,1.2)*0.5);
   const bodyLen=46, bodyR=15;
   ctx.strokeStyle='#c76b39'; ctx.lineWidth=4; ctx.lineCap='round';
@@ -918,6 +964,17 @@ function drawBee(bee){
 }
 function drawCoconut(x,y){ ctx.save(); ctx.translate(x,y); ctx.fillStyle='#6b4423'; ctx.beginPath(); ctx.arc(0,0,12,0,6.29); ctx.fill(); ctx.fillStyle='#4a2f18'; ctx.beginPath(); ctx.arc(-3,-3,2,0,6.29); ctx.arc(3,-2,2,0,6.29); ctx.arc(0,3,2,0,6.29); ctx.fill(); ctx.restore(); }
 function drawBanana(x,y,spin){ ctx.save(); ctx.translate(x,y); ctx.rotate(spin); ctx.fillStyle='#ffd23f'; ctx.strokeStyle='#c99a00'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-8,4); ctx.quadraticCurveTo(0,-10,10,2); ctx.quadraticCurveTo(2,2,-8,4); ctx.fill(); ctx.stroke(); ctx.restore(); }
+function drawGolden(x,y){   // invincibility banana — glowing gold with a star
+  ctx.save(); ctx.translate(x,y);
+  const r = 22 + Math.sin(game.t*0.15)*3;
+  const gl = ctx.createRadialGradient(0,0,4,0,0,r); gl.addColorStop(0,'rgba(255,235,120,0.85)'); gl.addColorStop(1,'rgba(255,235,120,0)');
+  ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(0,0,r,0,6.29); ctx.fill();
+  ctx.rotate(Math.sin(game.t*0.05)*0.3);
+  ctx.fillStyle='#ffe14d'; ctx.strokeStyle='#c98f00'; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(-11,5); ctx.quadraticCurveTo(0,-15,14,3); ctx.quadraticCurveTo(3,3,-11,5); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#fff'; for(let i=0;i<3;i++){ const a=game.t*0.1+i*2.1; ctx.globalAlpha=0.6+0.4*Math.sin(a); ctx.beginPath(); ctx.arc(Math.cos(a)*14, Math.sin(a)*10, 1.6, 0, 6.29); ctx.fill(); }
+  ctx.globalAlpha=1; ctx.restore();
+}
 function drawCoin(x,y){   // a shiny mini-sausage
   ctx.save(); ctx.translate(x,y);
   ctx.strokeStyle='rgba(255,240,150,0.7)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,16+Math.sin(game.t*0.15)*2,0,6.29); ctx.stroke();
@@ -965,11 +1022,11 @@ function renderBoss(){
   // On-screen D-pad.
   drawDpad();
   if(boss.intro>0){ ctx.globalAlpha=clamp(boss.intro/160,0,1); ctx.fillStyle='#fff'; ctx.font='bold 25px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=5; ctx.textAlign='center';
-    const msg = game.armed ? 'Whack it — pan breaks after 2!' : 'No pan — jump on its head!';
+    const msg = 'SWING into the gorilla!';
     ctx.strokeText(msg,VW/2,VH*0.28); ctx.fillText(msg,VW/2,VH*0.28);
-    ctx.font='bold 15px system-ui'; const sub = boss.helpers.length ? ('Your '+boss.helpers.length+' monkey pals are helping!') : 'Tip: collect 🌭 for monkey helpers';
+    ctx.font='bold 15px system-ui'; const sub = game.armed ? 'Pan hits do double — it breaks after 2' : (boss.helpers.length ? ('Your '+boss.helpers.length+' monkey pals are helping!') : 'Only fast swings hurt it!');
     ctx.fillText(sub,VW/2,VH*0.28+26);
-    ctx.font='bold 14px system-ui'; ctx.fillText('◀ ▶ walk   ⤒ jump   tap a vine to swing',VW/2,VH*0.28+50); ctx.globalAlpha=1; }
+    ctx.font='bold 14px system-ui'; ctx.fillText('tap a vine to grab   ◀ ▶ walk   ⤒ jump',VW/2,VH*0.28+50); ctx.globalAlpha=1; }
 }
 function drawDpad(){
   const btn=(b,draw)=>{ const held=(b===BTN.left&&bossBtn.left)||(b===BTN.right&&bossBtn.right);
@@ -1138,8 +1195,8 @@ function frame(now){
   render(); requestAnimationFrame(frame);
 }
 clouds=makeClouds(); level=genLevel(1); anchors=level.anchors; trees=level.trees;
-monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; bees=[]; floatTexts=[];
-player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,face:'happy',legPh:0,r:15,onGround:true};
+monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; bees=[]; powerups=[]; floatTexts=[];
+player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,invuln:0,face:'happy',legPh:0,r:15,onGround:true};
 requestAnimationFrame(frame);
 // Nickname entry.
 document.getElementById('namebtn').addEventListener('click', commitName);
@@ -1147,6 +1204,7 @@ document.getElementById('nameinput').addEventListener('keydown', e => { if (e.ke
 if (!getName()) openNick();   // ask once on first ever launch
 
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+
 
 
 
