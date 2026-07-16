@@ -1,6 +1,6 @@
 /* Sausage Swing service worker — offline app shell so it plays with no network
    once installed to the home screen. */
-const CACHE = 'sausage-swing-v2';
+const CACHE = 'sausage-swing-v3';
 const ASSETS = [
   './',
   './index.html',

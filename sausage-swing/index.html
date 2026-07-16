@@ -70,14 +70,15 @@ function mulberry32(a){
 }
 
 /* ---------- Tunables ---------- */
-const G           = 0.42;
+const G           = 0.37;  // a touch slower / gentler swinging
 const AIR         = 0.994;
-const GRAPPLE     = 370;   // how far the player can physically reach a vine
-const TAP_TOL     = 95;    // how close your tap must be to a treetop
+const GRAPPLE     = 400;   // how far the player can physically reach a vine
+const TAP_TOL     = 100;   // how close your tap must be to a treetop
 const RELEASE_KICK= 1.07;
-const MAXV        = 24;
+const MAXV        = 23;
 const CLIFF_TOP   = Math.round(VH * 0.60);
 const CLIFF_W     = 240;
+const STAND_DY    = 63;    // lift so the sausage's feet rest ON the grass
 const CLIMB_SPEED = 3.2;   // rope shortening per step while climbing
 const CLIMB_MIN   = 70;
 const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
@@ -202,7 +203,7 @@ function blip(freq, dur, type){
    ========================================================================== */
 function genLevel(n){
   const rng = mulberry32((n * 2654435761) >>> 0);
-  const spacing = 175 + Math.min(n * 7, 120);
+  const spacing = 205 + Math.min(n * 7, 120);   // trees a bit further apart
   const bandLo  = 280, bandHi = 400 + Math.min(n * 8, 120);
   const startX  = CLIFF_W;
   let x = startX + 130;
@@ -270,7 +271,7 @@ function loadLevel(n){
   game.armed = false; game.camX = 0; game.state = S.PLAY; game.timer = 0; game.panMsg = 0;
   game.arena = false; game.hint = n === 1 ? 260 : 0;
   grappleId = null; pointers.clear();
-  player = { x:CLIFF_W-40, y:CLIFF_TOP, vx:0, vy:0, mode:'stand',
+  player = { x:CLIFF_W-40, y:CLIFF_TOP-STAND_DY, vx:0, vy:0, mode:'stand',
              ax:0, ay:0, L:0, curA:null, iframe:0, face:'happy', legPh:0, r:15 };
 }
 function retryLevel(){ loadLevel(game.level); }
@@ -403,16 +404,16 @@ function step(){
 
   updateParticles(); updateClouds();
 
-  // Reached the end cliff?
-  if (p.x >= level.endCliffX && p.y >= CLIFF_TOP-30){
+  // Crossed the finish line? The WHOLE finish cliff counts — touch it at any
+  // height (as long as you haven't fallen into the ravine) and you're through.
+  if (p.x >= level.endCliffX && p.y < VH){
     if (level.boss && !level.bossDone){ enterBoss(); return; }
-    p.y=CLIFF_TOP; p.mode='stand'; p.vx=p.vy=0;
+    p.x=level.endCliffX; p.y=CLIFF_TOP-STAND_DY; p.mode='stand'; p.vx=p.vy=0;
     game.state=S.CLEAR; game.timer=55; blip(880,0.1); blip(1120,0.12);
     for (let i=0;i<24;i++) spawnSpark(p.x, p.y-20, '#ffe27a'); return;
   }
-  // Safe landings on cliff tops.
-  const overStart = p.x < CLIFF_W, overEnd = p.x >= level.endCliffX;
-  if ((overStart||overEnd) && p.mode!=='swing' && p.y >= CLIFF_TOP-p.r && p.vy>=0){ p.y=CLIFF_TOP; p.vy=0; p.vx*=0.5; p.mode='stand'; }
+  // Safe landing back on the start cliff.
+  if (p.x < CLIFF_W && p.mode!=='swing' && p.y >= CLIFF_TOP-STAND_DY && p.vy>=0){ p.y=CLIFF_TOP-STAND_DY; p.vy=0; p.vx*=0.5; p.mode='stand'; }
   if (p.y > VH+80) loseLife('fall');
 }
 
@@ -442,7 +443,7 @@ function enterBoss(){
   // Two swing vines in the arena.
   anchors = [ {x:VW*0.40, y:200}, {x:VW*0.60, y:170} ];
   bananas = []; coconuts = []; particles = []; floatTexts = [];
-  player.x = 70; player.y = BOSS_FLOOR; player.vx=0; player.vy=0; player.mode='stand'; player.curA=null; player.iframe=60;
+  player.x = 70; player.y = BOSS_FLOOR-STAND_DY; player.vx=0; player.vy=0; player.mode='stand'; player.curA=null; player.iframe=60;
   grappleId = null; pointers.clear();
   blip(90,0.4,'sawtooth'); game.shake = 18;
 }
@@ -455,7 +456,7 @@ function updateBoss(){
 
   integrate(p);
   // Full-width floor.
-  if (p.mode!=='swing' && p.y >= BOSS_FLOOR-p.r && p.vy>=0){ p.y=BOSS_FLOOR; p.vy=0; p.vx*=0.6; p.mode='stand'; }
+  if (p.mode!=='swing' && p.y >= BOSS_FLOOR-STAND_DY && p.vy>=0){ p.y=BOSS_FLOOR-STAND_DY; p.vy=0; p.vx*=0.6; p.mode='stand'; }
   p.x = clamp(p.x, 14, VW-14);
   p.face = p.mode==='swing' ? 'happy' : p.mode==='fly' ? 'ooh' : 'happy';
 
@@ -569,7 +570,7 @@ function drawWorld(){
   for(const t of trees) drawTree(t);
   for(const c of coins) if(!c.got) drawCoin(c.x, c.y+Math.sin(c.bob)*5);
   if(pan && !pan.got) drawPan(pan.x, pan.y+Math.sin(pan.bob)*6);
-  drawCliff(0,CLIFF_W,true); drawCliff(level.endCliffX,CLIFF_W,false);
+  drawCliff(0,CLIFF_W,true); drawCliff(level.endCliffX,CLIFF_W,false); drawFinishLine(level.endCliffX);
   for(const m of monkeys) if(m.alive) drawMonkey(m.x,m.y);
   for(const b of birds) drawBird(b);
   for(const c of coconuts) drawCoconut(c.x,c.y);
@@ -590,8 +591,30 @@ function drawCliff(x,w,isStart){
   ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x,top+18,w,VH-top);
   ctx.fillStyle='#57b94f'; ctx.fillRect(x,top-10,w,18);
   ctx.fillStyle='#66cf5c'; for(let gx=x+4;gx<x+w;gx+=12){ ctx.beginPath(); ctx.moveTo(gx,top-10); ctx.lineTo(gx+4,top-20); ctx.lineTo(gx+8,top-10); ctx.fill(); }
-  if(!isStart){ ctx.strokeStyle='#5a4632'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(x+w/2,top-10); ctx.lineTo(x+w/2,top-70); ctx.stroke();
-    ctx.fillStyle='#ff5252'; const wav=Math.sin(game.t*0.15)*4; ctx.beginPath(); ctx.moveTo(x+w/2,top-70); ctx.lineTo(x+w/2+34,top-62+wav); ctx.lineTo(x+w/2,top-52); ctx.fill(); }
+}
+// The whole finish cliff is the goal — a bold checkerboard line marks it so it's
+// obvious that touching ANY of it clears the level.
+function drawFinishLine(x){
+  const sq=15, topY=90;
+  // checkered band running the full height, right at the finish edge
+  for(let yy=topY; yy<VH; yy+=sq){
+    const row=Math.floor((yy-topY)/sq);
+    for(let i=0;i<2;i++){
+      ctx.fillStyle=((row+i)%2===0)?'#20242b':'#f6f6f6';
+      ctx.fillRect(x-sq+i*sq, yy, sq, sq);
+    }
+  }
+  // pole + waving checkered flag on top
+  ctx.fillStyle='#6b5330'; ctx.fillRect(x-2, 40, 4, topY-40);
+  const wav=Math.sin(game.t*0.12)*4;
+  for(let r=0;r<3;r++) for(let cc=0;cc<4;cc++){
+    ctx.fillStyle=((r+cc)%2===0)?'#20242b':'#f6f6f6';
+    ctx.fillRect(x+2+cc*11, 42+r*10+ (cc*wav*0.4), 11, 10);
+  }
+  // little "FINISH" tag
+  ctx.fillStyle='#20242b'; ctx.font='bold 13px system-ui'; ctx.textAlign='center';
+  ctx.save(); ctx.translate(x+2, 128); ctx.fillStyle='rgba(255,255,255,0.9)';
+  roundRect(-30,-14,60,20,6); ctx.fill(); ctx.fillStyle='#20242b'; ctx.fillText('FINISH',0,0); ctx.restore();
 }
 function drawTree(t){
   const sway=Math.sin(game.t*0.02+t.sway)*4;
@@ -805,6 +828,7 @@ monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; floatText
 player={x:CLIFF_W-40,y:CLIFF_TOP,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,face:'happy',legPh:0,r:15};
 requestAnimationFrame(frame);
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+
 
 </script>
 </body>

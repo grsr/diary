@@ -17,8 +17,9 @@ Play it at **https://grsr.github.io/diary/sausage-swing/**
 - **Shake the phone** to swing higher and build speed for long gaps.
 - **Tap with a second finger** to climb up the rope (handy for lining up a
   treetop above you).
-- Reach the **far cliff** to clear the level. Don't fall into the ravine, and
-  dodge the hazards.
+- Cross the **checkered finish line** to clear the level — swinging into any
+  part of the finish cliff counts. Don't fall into the ravine, and dodge the
+  hazards.
 
 On desktop: **Space** grabs the nearest reachable treetop, **↑** climbs the
 rope, and **P** does a swing pump (stands in for shaking).
