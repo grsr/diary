@@ -10,24 +10,38 @@ Play it at **https://grsr.github.io/diary/sausage-swing/**
 
 ## How to play
 
-- **Hold** anywhere to shoot a rope and grab the nearest vine, then swing.
-- **Let go** on the forward up-swing to fly to the next tree — timing is
-  everything.
-- While you're in the air, **hold again** to auto-catch the next vine, so you
-  can chain across the whole ravine.
+- **Tap the top of a tree** (the highlighted knob in the leaves) to shoot a rope
+  and swing to it.
+- **Hold** to keep swinging; **let go** on the forward up-swing to fly to the
+  next tree — timing is everything.
+- **Shake the phone** to swing higher and build speed for long gaps.
+- **Tap with a second finger** to climb up the rope (handy for lining up a
+  treetop above you).
 - Reach the **far cliff** to clear the level. Don't fall into the ravine, and
-  **dodge the bananas**.
+  dodge the hazards.
 
-On desktop you can use the **Spacebar** instead of touch.
+On desktop: **Space** grabs the nearest reachable treetop, **↑** climbs the
+rope, and **P** does a swing pump (stands in for shaking).
 
 ## The rules
 
 - **Score** = how many levels you clear.
-- **3 lives.** A banana hit or a fall costs one life and restarts the current
+- **3 lives.** Getting hit or falling costs a life and restarts the current
   level. Run out and it's game over (your best score is saved on the device).
-- **Every 3rd level** a 🍳 **frying pan** floats on the path. Grab it and, for
-  the rest of that level, swinging into a monkey **whacks it** — clearing the
-  banana threat.
+- **Mini-sausages** 🌭 are scattered along the way like coins. Grab them — each
+  one becomes a **monkey helper** in the next boss fight (up to 6).
+- **Every 3rd level is a boss level.** A 🍳 **frying pan** floats on the path —
+  grab it, because reaching the far cliff triggers a **gorilla boss fight**.
+  Swing into the gorilla with the pan to **whack** it; your monkey helpers pelt
+  it with bananas; and if you missed the pan you can still bop it on the head.
+  Meanwhile dodge its **barrels** and **falling coconuts**.
+
+## Hazards
+
+- **Monkeys** in the trees throw **bananas**.
+- **Birds** patrol the sky.
+- **Coconut trees** drop coconuts as you pass under them.
+- **Gorilla boss** (every 3rd level): barrels + coconut rain.
 
 ## Difficulty
 
