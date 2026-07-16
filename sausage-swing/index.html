@@ -94,7 +94,7 @@ const STAND_DY    = 63;    // lift so the sausage's feet rest ON the grass
 const CLIMB_SPEED = 3.2;   // rope shortening per step while climbing
 const CLIMB_MIN   = 70;
 const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
-const SHAKE_THRESH= 9;     // lower = easier to trigger a shake
+const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
@@ -108,11 +108,11 @@ const game = {
   best: +(localStorage.getItem('sausageBest') || 0),
   coins: 0,                       // mini-sausages banked this run
   camX: 0, shake: 0, t: 0, timer: 0,
-  armed: false, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false,
+  armed: false, panUses: 0, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false,
 };
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
-    coins, birds, coconuts, spikes, boss, floatTexts;
+    coins, birds, coconuts, spikes, bees, boss, floatTexts;
 let runSeed = 0x5eed1;           // randomized each new game so every run differs
 
 /* ---------- Online leaderboard (Supabase REST) ---------- */
@@ -201,7 +201,7 @@ function onDown(e){
   if (game.state !== S.PLAY) return;
 
   const p = player;
-  if (p.mode === 'swing') return;   // a 2nd finger while swinging = climb
+  if (p.mode === 'swing'){ pump(); return; }   // tap while swinging = pump higher (hold a 2nd finger to climb)
   const w = toWorld(e.clientX, e.clientY);
   const a = findAnchorAt(w.x, w.y);
   if (a){ attach(a); grappleId = e.pointerId; blip(660, 0.05); }
@@ -377,8 +377,22 @@ function genLevel(n){
     let sx = startX + 220 + t * (endCliffX - startX - 360);
     // nudge away from any treetop so a spike never sits on a grab point
     for (const a of A){ if (Math.abs(a.x - sx) < 70){ sx += 90; } }
-    SP.push({ x:sx, y:190 + rng()*230, baseY:0, amp:(rng()<0.5?0:18+rng()*22), ph:rng()*6.28 });
+    // Down in the swing path (so you actually have to dodge them). Some patrol
+    // side-to-side, some bob up and down.
+    const moves = rng() < 0.5;
+    SP.push({ x:sx, baseX:sx, y:360 + rng()*210, baseY:0, ph:rng()*6.28,
+              amp: moves?0:(16+rng()*22),
+              vx: moves?((rng()<0.5?-1:1)*(0.7+rng()*0.9)):0 });
     SP[SP.length-1].baseY = SP[SP.length-1].y;
+  }
+
+  // Bees — a new hazard from level 4 that slowly chases you (dodge by swinging
+  // away). Adds variety beyond the static/patrolling obstacles.
+  const BE = [];
+  const beeCount = n >= 4 ? Math.min(Math.floor((n-2)/2), 4) : 0;
+  for (let i = 0; i < beeCount; i++){
+    const bx = startX + 300 + rng() * (endCliffX - startX - 420);
+    BE.push({ x:bx, y:240 + rng()*180, vx:0, vy:0, wing:rng()*6.28, spd:0.9 + Math.min(n*0.05, 0.9) });
   }
 
   const isBoss = (n % 3 === 0);
@@ -388,7 +402,7 @@ function genLevel(n){
     const a = A[(A.length/2)|0];
     P = { x:a.x + spacing*0.4, y:a.y + 120, got:false, bob:0 };
   }
-  return { n, len:levelLen, endCliffX, anchors:A, trees:T, monkeys:M, coins:C, birds:B, spikes:SP, pan:P, boss:isBoss, bossDone:false };
+  return { n, len:levelLen, endCliffX, anchors:A, trees:T, monkeys:M, coins:C, birds:B, spikes:SP, bees:BE, pan:P, boss:isBoss, bossDone:false };
 }
 
 /* ============================================================================
@@ -401,7 +415,7 @@ function loadLevel(n){
   game.level = n;
   level   = genLevel(n);
   anchors = level.anchors; trees = level.trees; monkeys = level.monkeys;
-  coins   = level.coins;   birds = level.birds; pan = level.pan; spikes = level.spikes;
+  coins   = level.coins;   birds = level.birds; pan = level.pan; spikes = level.spikes; bees = level.bees;
   bananas = []; particles = []; coconuts = []; floatTexts = []; boss = null;
   clouds = clouds || makeClouds();
   game.armed = false; game.camX = 0; game.state = S.PLAY; game.timer = 0; game.panMsg = 0;
@@ -542,9 +556,23 @@ function step(){
     if (bd.x < CLIFF_W-40 || bd.x > level.endCliffX+40) bd.vx *= -1;
     if (p.iframe<=0 && Math.hypot(bd.x-p.x,bd.y-p.y) < p.r+14){ p.iframe=1; loseLife('bird'); } }
 
-  // Spiky sky blocks; collision hurts.
-  for (const s of spikes){ if (s.amp) s.y = s.baseY + Math.sin(s.ph + game.t*0.02)*s.amp;
+  // Spiky blocks in the swing path; some bob, some patrol side-to-side.
+  for (const s of spikes){
+    if (s.amp) s.y = s.baseY + Math.sin(s.ph + game.t*0.02)*s.amp;
+    if (s.vx){ s.x += s.vx; if (Math.abs(s.x - s.baseX) > 85) s.vx *= -1; }
     if (p.iframe<=0 && Math.abs(s.x-p.x) < p.r+18 && Math.abs(s.y-p.y) < p.r+18){ p.iframe=1; loseLife('spike'); } }
+
+  // Bees slowly home in on the player; swing away to shake them.
+  for (const bee of bees){ bee.wing += 0.4;
+    const onScreen = bee.x > game.camX-60 && bee.x < game.camX+VW+60;
+    if (onScreen){
+      const dx=p.x-bee.x, dy=p.y-bee.y, d=Math.hypot(dx,dy)||1;
+      bee.vx += dx/d*0.05; bee.vy += dy/d*0.05;
+      const sp=Math.hypot(bee.vx,bee.vy); if (sp>bee.spd){ bee.vx=bee.vx/sp*bee.spd; bee.vy=bee.vy/sp*bee.spd; }
+      bee.x += bee.vx; bee.y += bee.vy;
+      if (p.iframe<=0 && Math.hypot(bee.x-p.x,bee.y-p.y) < p.r+12){ p.iframe=1; loseLife('bee'); }
+    }
+  }
 
   // Keep the sausage on screen — no vanishing off the top.
   if (p.y < 24 && p.mode !== 'swing'){ p.y = 24; if (p.vy < 0) p.vy = 0; }
@@ -581,16 +609,17 @@ const BOSS_STAND = BOSS_FLOOR - STAND_DY;   // player's feet-on-floor y
 function enterBoss(){
   game.state = S.BOSS; game.arena = true; game.camX = 0; game.timer = 0;
   const tier = level.n / 3;                       // 1,2,3...
-  const hp = 6 + (tier-1)*4;
+  const hp = 6 + (tier-1)*5;                       // scales up steeply each boss
   boss = {
-    g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:hp, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
+    g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:hp, tier, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
     helpers: [], barrels: [], cocos: [], fban: [], intro: 160,
   };
   const helperN = Math.min(game.coins, HELPER_CAP);
-  for (let i=0;i<helperN;i++) boss.helpers.push({ x:22+i*26, y:BOSS_FLOOR, cd:40+i*14, bob:i });
-  // Swingable vines across the arena — tap one to swing in at the gorilla.
-  anchors = [ {x:VW*0.26, y:150}, {x:VW*0.44, y:120}, {x:VW*0.62, y:120}, {x:VW*0.80, y:150} ];
+  for (let i=0;i<helperN;i++) boss.helpers.push({ x:22+i*26, y:BOSS_FLOOR, cd:40+i*16, bob:i, gone:false });
+  // Swingable vines — all kept to the LEFT of the gorilla (you can't get behind it).
+  anchors = [ {x:VW*0.22, y:150}, {x:VW*0.38, y:120}, {x:VW*0.54, y:120}, {x:VW*0.70, y:150} ];
   bananas = []; coconuts = []; particles = []; floatTexts = [];
+  game.panUses = game.armed ? 2 : 0;              // pan breaks after 2 whacks
   player.x = 60; player.y = BOSS_STAND; player.vx=0; player.vy=0; player.mode='stand'; player.onGround=true; player.curA=null; player.iframe=60;
   grappleId = null; pointers.clear(); pointerBtn.clear(); recomputeBtns();
   blip(90,0.4,'sawtooth'); game.shake = 18;
@@ -601,12 +630,13 @@ function updateBoss(){
   const p = player, b = boss, g = b.g;
   if (b.intro > 0) b.intro--;
 
+  const maxX = g.x - 26;   // can't get behind the gorilla — no safe corner
   // ---- Movement: swing on a vine, or walk/jump with the D-pad ----
   if (p.mode === 'swing'){
     integrate(p);                                // pendulum + two-finger climb
     p.onGround = false; p.face = 'happy';
     if (p.y < 24){ p.y = 24; }
-    p.x = clamp(p.x, 16, VW-16);
+    p.x = clamp(p.x, 16, maxX);
   } else {
     const target = bossBtn.left ? -WALK : bossBtn.right ? WALK : 0;
     // On the ground, walk; in the air keep swing momentum unless steering.
@@ -616,7 +646,7 @@ function updateBoss(){
     p.onGround = false;
     if (p.y >= BOSS_STAND && p.vy >= 0){ p.y = BOSS_STAND; p.vy = 0; p.onGround = true; }
     if (p.y < 24){ p.y = 24; if (p.vy < 0) p.vy = 0; }   // ceiling — never off the top
-    p.x = clamp(p.x, 16, VW-16);
+    p.x = clamp(p.x, 16, maxX);
     p.mode = p.onGround ? 'stand' : 'fly';
     p.legPh += Math.abs(p.vx) * 0.06 + 0.05;
     p.face = p.onGround ? 'happy' : 'ooh';
@@ -632,27 +662,34 @@ function updateBoss(){
     // missed the pan. Either way you get knocked back so you re-approach.
     if (g.iframe<=0){
       const near = Math.abs(p.x-g.x) < 46;
-      const panHit  = game.armed && near && p.y > g.y-118 && p.y < g.y+8;
-      const headBop = !game.armed && !p.onGround && p.vy > 0.4 && Math.abs(p.x-g.x) < 36 && p.y < g.y-60 && p.y > g.y-120;
+      const canPan = game.armed && game.panUses > 0;
+      const panHit  = canPan && near && p.y > g.y-118 && p.y < g.y+8;
+      const headBop = !canPan && !p.onGround && p.vy > 0.4 && Math.abs(p.x-g.x) < 36 && p.y < g.y-60 && p.y > g.y-120;
       if (panHit || headBop){
         g.hp--; g.iframe=26; g.hurt=18; game.shake=14; blip(320,0.09,'square');
         spawnText(g.x, g.y-96, panHit?'WHACK!':'BONK!', '#fff'); for(let i=0;i<12;i++) spawnSpark(g.x,g.y-50,'#ffe27a');
         if (p.mode==='swing'){ p.mode='fly'; grappleId=null; }   // let go on impact
-        if (panHit){ p.vx = Math.sign(p.x-g.x||-1)*7; p.vy = -6; p.onGround=false; } else { p.vy = -JUMP_V*0.9; }
+        if (panHit){ p.vx = Math.sign(p.x-g.x||-1)*7; p.vy = -6; p.onGround=false;
+          if (--game.panUses <= 0){ game.armed=false; spawnText(p.x, p.y-40, 'PAN BROKE!', '#e6b0a0'); blip(120,0.2,'sawtooth'); }
+        } else { p.vy = -JUMP_V*0.9; }
         p.iframe=16;
       }
     }
-    // Gorilla attacks: rolling barrels + a gentler chest-beat coconut shower.
-    if (--g.cd <= 0){ g.cd = Math.max(105, 165 - level.n*2); g.anim = 0;
-      b.barrels.push({ x:g.x-30, y:BOSS_FLOOR-14, vx:-(2.4+Math.random()*1.1), spin:0 }); blip(160,0.1,'sawtooth'); }
-    if (--g.beatCd <= 0){ g.beatCd = 360; game.shake=10; blip(120,0.2,'sawtooth');
-      const nc = 2 + (level.n>=6?1:0); for (let i=0;i<nc;i++) b.cocos.push({ x:40+Math.random()*(VW-80), y:-20-Math.random()*40, vy:0.5+Math.random()*0.8 }); }
-    // Helper monkeys pelt the gorilla — aimed straight at its chest so they land.
-    for (const h of b.helpers){ h.bob += 0.1;
-      if (--h.cd <= 0){ h.cd = 70 + Math.random()*40;
+    // Gorilla attacks — faster and heavier the further you get (higher tier).
+    const T = g.tier;
+    if (--g.cd <= 0){ g.cd = Math.max(55, 150 - T*20 - Math.random()*25); g.anim = 0;
+      b.barrels.push({ x:g.x-30, y:BOSS_FLOOR-14, vx:-(2.4 + T*0.5 + Math.random()*1.1), spin:0 }); blip(160,0.1,'sawtooth'); }
+    if (--g.beatCd <= 0){ g.beatCd = Math.max(200, 360 - T*30); game.shake=10; blip(120,0.2,'sawtooth');
+      const nc = 1 + T; for (let i=0;i<nc;i++) b.cocos.push({ x:40+Math.random()*(VW-80), y:-20-Math.random()*40, vy:0.4 + T*0.25 + Math.random()*0.8 }); }
+    // Helper monkeys: each lobs ONE banana at the gorilla then scurries away.
+    for (const h of b.helpers){ if (h.gone) continue; h.bob += 0.1;
+      if (--h.cd <= 0){ h.gone = true;
         const sx=h.x+8, sy=BOSS_FLOOR-24, tx=g.x, ty=g.y-46, d=Math.hypot(tx-sx,ty-sy)||1;
         b.fban.push({ x:sx, y:sy, vx:(tx-sx)/d*7.5, vy:(ty-sy)/d*7.5, spin:0 }); } }
   }
+  // Scurrying helpers run off to the left, then vanish.
+  for (const h of b.helpers){ if (h.gone){ h.x -= 3.2; } }
+  b.helpers = b.helpers.filter(h => !(h.gone && h.x < -30));
 
   // Barrels roll along the floor — jump over them (they hit only when your feet
   // are near the ground).
@@ -740,6 +777,7 @@ function drawWorld(){
   drawCliff(0,CLIFF_W,true); drawCliff(level.endCliffX,CLIFF_W,false); drawFinishLine(level.endCliffX);
   for(const m of monkeys) if(m.alive) drawMonkey(m.x,m.y);
   for(const s of spikes) drawSpike(s.x, s.y);
+  for(const bee of bees) drawBee(bee);
   for(const b of birds) drawBird(b);
   for(const c of coconuts) drawCoconut(c.x,c.y);
   for(const b of bananas) drawBanana(b.x,b.y,b.spin);
@@ -859,6 +897,18 @@ function drawSpike(x,y){   // a spiky metal block floating in the sky
   ctx.fillStyle='#3a4048'; ctx.beginPath(); ctx.arc(-4,-4,1.6,0,6.29); ctx.arc(4,-4,1.6,0,6.29); ctx.fill();  // grumpy eyes
   ctx.restore();
 }
+function drawBee(bee){
+  ctx.save(); ctx.translate(bee.x, bee.y); if(bee.vx<0) ctx.scale(-1,1);
+  const f=Math.sin(bee.wing)*7;
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.beginPath(); ctx.ellipse(-2,-8-f*0.3,7,4,-0.4,0,6.29); ctx.ellipse(2,-8-f*0.3,7,4,0.4,0,6.29); ctx.fill();
+  ctx.fillStyle='#f5c451'; ctx.beginPath(); ctx.ellipse(0,0,11,8,0,0,6.29); ctx.fill();
+  ctx.fillStyle='#2a241a';
+  ctx.fillRect(-4,-8,3,16); ctx.fillRect(3,-8,3,16);
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(9,-2,2,0,6.29); ctx.fill();
+  ctx.strokeStyle='#222'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(-11,0); ctx.lineTo(-16,-3); ctx.stroke();
+  ctx.restore();
+}
 function drawCoconut(x,y){ ctx.save(); ctx.translate(x,y); ctx.fillStyle='#6b4423'; ctx.beginPath(); ctx.arc(0,0,12,0,6.29); ctx.fill(); ctx.fillStyle='#4a2f18'; ctx.beginPath(); ctx.arc(-3,-3,2,0,6.29); ctx.arc(3,-2,2,0,6.29); ctx.arc(0,3,2,0,6.29); ctx.fill(); ctx.restore(); }
 function drawBanana(x,y,spin){ ctx.save(); ctx.translate(x,y); ctx.rotate(spin); ctx.fillStyle='#ffd23f'; ctx.strokeStyle='#c99a00'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-8,4); ctx.quadraticCurveTo(0,-10,10,2); ctx.quadraticCurveTo(2,2,-8,4); ctx.fill(); ctx.stroke(); ctx.restore(); }
 function drawCoin(x,y){   // a shiny mini-sausage
@@ -901,11 +951,14 @@ function renderBoss(){
   const g=boss.g, bw=VW-80, hpf=Math.max(0,g.hp/g.maxhp);
   ctx.fillStyle='rgba(0,0,0,0.35)'; roundRect(40,74,bw,16,8); ctx.fill();
   ctx.fillStyle='#ff5252'; roundRect(40,74,bw*hpf,16,8); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 13px system-ui'; ctx.textAlign='center'; ctx.fillText('GORILLA BOSS',VW/2,87);
+  ctx.fillStyle='#fff'; ctx.font='bold 13px system-ui'; ctx.textAlign='center'; ctx.fillText('GORILLA BOSS  •  Lvl '+level.n,VW/2,87);
+  // Pan-uses left.
+  if(game.armed && game.panUses>0){ ctx.save(); ctx.translate(30,110); panIcon(0,0,0.8); ctx.restore();
+    ctx.textAlign='left'; ctx.fillStyle='#fff'; ctx.font='bold 15px system-ui'; ctx.fillText('× '+game.panUses,46,114); }
   // On-screen D-pad.
   drawDpad();
   if(boss.intro>0){ ctx.globalAlpha=clamp(boss.intro/160,0,1); ctx.fillStyle='#fff'; ctx.font='bold 25px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=5; ctx.textAlign='center';
-    const msg = game.armed ? 'Whack it with the pan!' : 'No pan — jump on its head!';
+    const msg = game.armed ? 'Whack it — pan breaks after 2!' : 'No pan — jump on its head!';
     ctx.strokeText(msg,VW/2,VH*0.28); ctx.fillText(msg,VW/2,VH*0.28);
     ctx.font='bold 15px system-ui'; const sub = boss.helpers.length ? ('Your '+boss.helpers.length+' monkey pals are helping!') : 'Tip: collect 🌭 for monkey helpers';
     ctx.fillText(sub,VW/2,VH*0.28+26);
@@ -970,7 +1023,7 @@ function drawHUD(){
   if(game.panMsg>0){ ctx.globalAlpha=clamp(game.panMsg/40,0,1); ctx.textAlign='center'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 18px system-ui'; ctx.fillText('🍳 Frying pan! Save it for the gorilla',VW/2,VH*0.24); ctx.globalAlpha=1; }
   // level-1 control hint
   if(game.hint>0 && game.state===S.PLAY){ ctx.globalAlpha=clamp(game.hint/60,0,1); ctx.textAlign='center'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 17px system-ui';
-    ctx.fillText('👆 Tap a treetop to grab it',VW/2,VH*0.30); ctx.font='14px system-ui'; ctx.fillText('Let go to fly • Shake to swing higher',VW/2,VH*0.335); ctx.globalAlpha=1; }
+    ctx.fillText('👆 Tap a treetop to grab it',VW/2,VH*0.30); ctx.font='14px system-ui'; ctx.fillText('Let go to fly • Tap again to pump higher',VW/2,VH*0.335); ctx.globalAlpha=1; }
 }
 
 /* ---------- Overlays ---------- */
@@ -983,7 +1036,7 @@ function drawOverlays(){
     ctx.save(); ctx.translate(VW/2,VH*0.35); ctx.scale(1.45,1.45);
     const sp=player; player={mode:'swing',ax:0,ay:-90,x:0,y:0,vx:0,vy:0,legPh:game.t*0.1,r:15,face:'happy',iframe:0};
     const a=game.armed; game.armed=false; drawPlayer(player); game.armed=a; player=sp; ctx.restore();
-    body(['Tap a TREETOP to grab it & swing.','Let go to fly to the next tree.','SHAKE the phone to swing higher.','Two fingers to climb up the rope.','Grab 🌭 mini-sausages & the 🍳 pan —','beat the 🦍 GORILLA every 3rd level!'],VH*0.48);
+    body(['Tap a TREETOP to grab it & swing.','Let go to fly to the next tree.','TAP again mid-swing to pump higher.','Two fingers to climb up the rope.','Grab 🌭 mini-sausages & the 🍳 pan —','beat the 🦍 GORILLA every 3rd level!'],VH*0.48);
     if(hasSave()){
       const s=loadProgress();
       cta('CONTINUE • Lvl '+s.level, VH*0.78);
@@ -1073,7 +1126,7 @@ function frame(now){
   render(); requestAnimationFrame(frame);
 }
 clouds=makeClouds(); level=genLevel(1); anchors=level.anchors; trees=level.trees;
-monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; floatTexts=[];
+monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; bees=[]; floatTexts=[];
 player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,face:'happy',legPh:0,r:15,onGround:true};
 requestAnimationFrame(frame);
 // Nickname entry.
@@ -1082,6 +1135,7 @@ document.getElementById('nameinput').addEventListener('keydown', e => { if (e.ke
 if (!getName()) openNick();   // ask once on first ever launch
 
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+
 
 
 

@@ -58,9 +58,13 @@ also picks a randomized height "shape" so the treetops climb, dip, or zig-zag.
 
 - **Monkeys** in the trees throw **bananas**.
 - **Birds** patrol the sky.
-- **Spiky blocks** float in the sky — swing around them.
+- **Spiky blocks** sit in the swing path — some patrol side-to-side, some bob.
+- **Bees** (from level 4) slowly chase you — swing away to lose them.
 - **Coconut trees** drop coconuts as you pass under them.
-- **Gorilla boss** (every 3rd level): rolling barrels + coconut rain.
+- **Gorilla boss** (every 3rd level): rolling barrels + coconut rain, and it
+  gets tougher (more HP, faster/heavier attacks) each boss. You can't slip
+  behind it. The frying pan **breaks after 2 whacks**, and each monkey helper
+  lobs **one** banana then scurries off — so you'll need head-bops too.
 
 ## Difficulty
 
