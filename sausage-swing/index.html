@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v15';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v16';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -107,16 +107,20 @@ const S = { MENU:0, PLAY:1, DYING:2, CLEAR:3, OVER:4, BOSS:5, BOSSWIN:6 };
 const game = {
   state: S.MENU, level: 1, lives: START_LIVES, score: 0,
   best: +(localStorage.getItem('sausageBest') || 0),
-  coins: 0,                       // mini-sausages banked this run
+  coins: 0,                       // mini-sausages banked this run (become boss helpers)
+  gold: +(localStorage.getItem('sausageGold') || 0),   // gold coins — persistent, for the shop
   camX: 0, shake: 0, t: 0, timer: 0,
   armed: false, panUses: 0, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false, paused: false,
   rank: null, party: (localStorage.getItem('sausageParty')==='on'), eggTaps: 0, partyMsg: 0, bossHP: 0,
+  resetArm: 0,                    // menu "reset to zone 1" needs a confirming second tap
 };
+const RESETBTN = { x:VW-58, y:34, w:96, h:30 };   // menu-only reset button hit-box (top-right)
 const LBBTN = { x:34, y:VH-48, r:26 };     // in-play "view leaderboard" button (bottom-left)
 const MUTEBTN = { x:VW-34, y:VH-48, r:24 }; // music mute toggle (bottom-right, menu + play)
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
-    coins, birds, coconuts, spikes, bees, powerups, boss, floatTexts;
+    coins, goldcoins, birds, coconuts, spikes, bees, powerups, boss, floatTexts;
+function addGold(k){ game.gold += k; try { localStorage.setItem('sausageGold', game.gold); } catch(_){} }
 let runSeed = 0x5eed1;           // randomized each new game so every run differs
 
 /* ---------- Online leaderboard (Supabase REST) ---------- */
@@ -226,8 +230,18 @@ function onDown(e){
   if (p.mode === 'swing'){ pump(); return; }   // tap while swinging = pump higher (hold a 2nd finger to climb)
   const w = toWorld(e.clientX, e.clientY);
   const a = findAnchorAt(w.x, w.y);
-  if (a){ attach(a); grappleId = e.pointerId; blip(660, 0.05); }
+  if (a){
+    if (a.live && p.invuln <= 0){ zapDeath(a); }    // City: a LIVE cable zaps you
+    else { attach(a); grappleId = e.pointerId; blip(660, 0.05); }
+  }
   else { blip(200, 0.03); }
+}
+// Grab a live (yellow-zapping) City cable — bzzt, you lose a life.
+function zapDeath(a){
+  game.shake = 16; blip(1300, 0.05, 'sawtooth'); blip(170, 0.22, 'sawtooth');
+  for (let i=0;i<16;i++) spawnSpark(a.x, a.y + Math.random()*30, '#fff36b');
+  spawnText(a.x, a.y-14, 'ZAP!', '#fff36b');
+  loseLife('zap');
 }
 function onUp(e){
   e.preventDefault();
@@ -252,6 +266,13 @@ function bossPress(id, cx, cy){
 function bossJump(){ if (player.onGround){ player.vy = -JUMP_V; player.onGround=false; player.mode='fly'; blip(500,0.05); } }
 function menuTap(cx, cy){
   const v = toScreen(cx, cy);
+  // Reset-everything button (top-right): starts a fresh run in Zone 1. Keeps your
+  // gold and leaderboard. Needs a second confirming tap.
+  if (Math.abs(v.x-RESETBTN.x) < RESETBTN.w/2 && Math.abs(v.y-RESETBTN.y) < RESETBTN.h/2){
+    if (game.resetArm > 0){ game.resetArm = 0; clearProgress(); startRun(); }
+    else { game.resetArm = 150; blip(300,0.05); }
+    return;
+  }
   if (v.y > VH*0.27 && v.y < VH*0.44 && Math.abs(v.x-VW/2) < 95){ eggTap(); return; }                    // secret: tap the sausage
   if (v.y > VH*0.95-18 && v.y < VH*0.95+14 && Math.abs(v.x-VW/2) < 160){ openNick(); return; }          // nickname
   if (v.y > VH*0.895-20 && v.y < VH*0.895+20 && Math.abs(v.x-VW/2) < 105){ game.viewBoard=true; fetchBoard(); return; }  // leaderboard
@@ -273,7 +294,7 @@ window.addEventListener('keydown', e => {
     if (game.state === S.OVER){ e.preventDefault(); startRun(); return; }
     if (game.state === S.BOSS){ e.preventDefault(); bossJump(); return; }
     if (e.code === 'Space' && player && player.mode !== 'swing'){
-      e.preventDefault(); const a = findNearestReachable(); if (a){ attach(a); grappleId = 'kbd'; }
+      e.preventDefault(); const a = findNearestReachable(); if (a){ if (a.live && player.invuln<=0){ zapDeath(a); } else { attach(a); grappleId = 'kbd'; } }
     }
   }
   if (game.state === S.BOSS){ if (e.code==='ArrowLeft') bossBtn.left=true; if (e.code==='ArrowRight') bossBtn.right=true; }
@@ -351,12 +372,20 @@ const MEL  = [NT.C5,0,NT.G4,NT.E4, NT.G4,0,NT.A4,0, NT.C5,0,NT.G4,NT.E4, NT.D4,0
               NT.B4,0,NT.G4,NT.D4, NT.G4,0,NT.A4,NT.B4, NT.C5,NT.B4,NT.A4,NT.G4, NT.E4,0,0,0];
 const BASS = [NT.C3,0,NT.C3,0, NT.F3,0,NT.F3,0, NT.G3,0,NT.G3,0, NT.C3,0,NT.G3,0];
 const BOSSMEL = [NT.E3,0,NT.E3,NT.F3, NT.G3,0,NT.F3,NT.E3, NT.A3,0,NT.G3,NT.F3, NT.E3,0,0,0]; // darker for boss
+// City theme — a cooler, syncopated synth-pop riff.
+const CITYMEL = [NT.A4,0,NT.E4,0, NT.A4,NT.B4,NT.C5,0, NT.D5,0,NT.C5,NT.A4, NT.B4,0,NT.G4,0,
+                 NT.E4,0,NT.A4,0, NT.C5,0,NT.B4,NT.A4, NT.G4,NT.A4,NT.B4,0, NT.A4,0,0,0];
+const CITYBASS = [NT.A3,0,NT.A3,0, NT.F3,0,NT.F3,0, NT.C4,0,NT.C4,0, NT.E3,0,NT.E3,0];
 function musicTick(){
   const playing = musicOn && (game.state===S.PLAY || game.state===S.BOSS);
+  const city = level && level.zone === 1;
   if (playing){
     if (game.state===S.BOSS){
-      const m = BOSSMEL[musicStep % BOSSMEL.length]; if (m) musicNote(m, 0.18, 'sawtooth', 0.03);
-      if (musicStep % 2 === 0) musicNote(BASS[musicStep % BASS.length]||NT.C3, 0.2, 'triangle', 0.04);
+      const m = BOSSMEL[musicStep % BOSSMEL.length]; if (m) musicNote(m, 0.18, city?'square':'sawtooth', 0.03);
+      const bass = city ? CITYBASS : BASS; if (musicStep % 2 === 0) musicNote(bass[musicStep % bass.length]||NT.C3, 0.2, 'triangle', 0.04);
+    } else if (city){
+      const m = CITYMEL[musicStep % CITYMEL.length]; if (m) musicNote(m, 0.14, 'sawtooth', 0.02);
+      const bn = CITYBASS[musicStep % CITYBASS.length]; if (bn) musicNote(bn, 0.18, 'triangle', 0.03);
     } else {
       const m = MEL[musicStep % MEL.length]; if (m) musicNote(m, 0.15, 'square', 0.024);
       const bn = BASS[musicStep % BASS.length]; if (bn) musicNote(bn, 0.2, 'triangle', 0.032);
@@ -368,6 +397,17 @@ function startMusicLoop(){ if (musicTimer || !actx) return; musicTimer = setInte
 function toggleMusic(){ musicOn = !musicOn; try { localStorage.setItem('sausageMusic', musicOn?'on':'off'); } catch(_){} blip(musicOn?660:300, 0.06); }
 
 /* ============================================================================
+   ZONES  —  every 10 levels is a new themed world. Difficulty "resets" each
+   zone (level 1 of a zone is easy again) but is nudged up a touch from the last
+   zone, so zone-2 level 5 is a bit harder than zone-1 level 5, but easier than
+   zone-1 level 6.
+   ========================================================================== */
+const ZONE_NAMES = ['Jungle', 'City', 'Mineshaft'];
+function zoneOf(n){ return n < 10 ? 0 : n < 20 ? 1 : 2; }
+function zoneLevel(n){ const z = zoneOf(n); return n - (z===0 ? 0 : z===1 ? 9 : 19); }  // 1..10
+function diffOf(n){ return zoneLevel(n) + zoneOf(n)*0.5; }   // effective difficulty
+
+/* ============================================================================
    LEVEL GENERATION
    ========================================================================== */
 function genLevel(n){
@@ -375,27 +415,35 @@ function genLevel(n){
   // number looks different every new game — but stays identical when you retry
   // it after a death within the same run.
   const rng = mulberry32((runSeed ^ Math.imul(n, 2654435761)) >>> 0);
-  const spacing = 205 + Math.min(n * 7, 120);   // trees a bit further apart
-  const bandLo  = 280, bandHi = 400 + Math.min(n * 8, 120);
+  const zone = zoneOf(n);
+  const zl = zoneLevel(n);                        // 1..10 within this zone (gates features)
+  const d = diffOf(n);                            // difficulty scales by zone-level (with a nudge each zone)
+  const spacing = 205 + Math.min(d * 7, 120);
+  const bandLo  = 280, bandHi = 400 + Math.min(d * 8, 120);
   const startX  = CLIFF_W;
   let x = startX + 130;
   const A = [], T = [];
-  const wantLen = 1500 + Math.min(n * 240, 5200);
+  const wantLen = 1500 + Math.min(d * 240, 5200);
   // Each level picks a height "shape": a wave the treetops follow, so some
   // levels climb, some dip, some zig-zag — and it's different every run.
   const mid = (bandLo + bandHi) / 2, amp = (bandHi - bandLo) / 2;
   const freq = 0.4 + rng() * 1.3, phase = rng() * 6.28, drift = (rng() - 0.5) * 26;
-  let i = 0, prevY = mid;
+  let i = 0, prevY = mid, prevLive = false;
   while (x < wantLen){
     let y = mid + Math.sin(phase + i*freq) * amp * (0.55 + rng()*0.45) + drift*i + (rng()-0.5)*36;
     y = clamp(y, bandLo - 10, bandHi + 30);
     y = clamp(y, prevY - 150, prevY + 150);      // keep the next vine reachable
     prevY = y;
-    // From level 6, some treetops drift side-to-side (moving vines).
-    const moving = n >= 6 && i > 0 && rng() < Math.min(0.14 + (n-6)*0.03, 0.5);
-    const a = { x, y, baseX:x, mv: moving ? (26 + rng()*34) : 0, mph: rng()*6.28, mvs: 0.012 + rng()*0.016 };
+    // Some vines/cables drift side-to-side (moving vines) from zone-level 6.
+    const moving = d >= 6 && i > 0 && rng() < Math.min(0.14 + (d-6)*0.03, 0.5);
+    // In the City, some cables are LIVE (yellow zap) — grabbing one zaps you.
+    // Never two live in a row, never the first, so there's always a safe route.
+    const live = zone === 1 && i > 0 && !prevLive && rng() < 0.30;
+    prevLive = live;
+    const a = { x, y, baseX:x, mv: moving ? (26 + rng()*34) : 0, mph: rng()*6.28, mvs: 0.012 + rng()*0.016, live, zap: rng()*6.28 };
     A.push(a);
-    T.push({ x, top: y, anchor:a, sway: rng() * 6.28, w: 16 + rng()*8, coconut: rng() < 0.4 && n >= 2, cd: 60 + rng()*120 });
+    T.push({ x, top: y, anchor:a, sway: rng() * 6.28, w: 16 + rng()*8,
+             coconut: zone===0 && rng() < 0.4 && d >= 2, cd: 60 + rng()*120 });
     x += spacing * (0.82 + rng() * 0.5);          // varied gap rhythm
     i++;
   }
@@ -403,17 +451,17 @@ function genLevel(n){
   const endCliffX = Math.min(lastA.x + spacing * 0.9, wantLen + 260);
   const levelLen = endCliffX + CLIFF_W;
 
-  // Monkeys.
+  // Monkeys — jungle monkeys, or slingshot kids in the City (see drawMonkey).
   const M = [];
-  let mc = Math.min(Math.max(0, Math.round((n - 1) * 0.85)), Math.max(0, A.length - 3), 9);
+  let mc = Math.min(Math.max(0, Math.round((d - 1) * 0.85)), Math.max(0, A.length - 3), 9);
   const idx = []; for (let i = 1; i < A.length - 1; i++) idx.push(i);
   for (let i = idx.length - 1; i > 0; i--){ const j = (rng()*(i+1))|0; [idx[i],idx[j]]=[idx[j],idx[i]]; }
   for (let i = 0; i < mc; i++){ const a = A[idx[i]]; if (!a) break;
-    M.push({ x:a.x, y:a.y-6, alive:true, cd:40+rng()*60, rate:Math.max(60,150-n*6), speed:6.2+Math.min(n*0.22,5), face:rng() }); }
+    M.push({ x:a.x, y:a.y-6, alive:true, cd:40+rng()*60, rate:Math.max(60,150-d*6), speed:6.2+Math.min(d*0.22,5), face:rng() }); }
 
   // Mini-sausages (coins) along the swing path.
   const C = [];
-  const coinCount = 3 + Math.min(n, 7);
+  const coinCount = 3 + Math.min(Math.round(d), 7);
   for (let i = 0; i < coinCount; i++){
     const t = (i + 0.5) / coinCount;
     const ax = startX + 160 + t * (endCliffX - startX - 300);
@@ -421,40 +469,57 @@ function genLevel(n){
     C.push({ x: ax + (rng()-0.5)*60, y: ay, got:false, bob: rng()*6.28 });
   }
 
-  // Birds (moving hazard), from level 2.
+  // Gold coins (stamped with a sausage) — rarer than mini-sausages, banked
+  // permanently across every zone to spend in the costume shop.
+  const GC = [];
+  const goldCount = rng() < 0.55 ? 1 : (rng() < 0.5 ? 2 : 0);
+  for (let i = 0; i < goldCount; i++){
+    const t = (i + 0.5) / (goldCount + 0.2);
+    const gx = startX + 220 + t * (endCliffX - startX - 380);
+    GC.push({ x: gx + (rng()-0.5)*50, y: bandLo + 70 + rng()*210, got:false, bob: rng()*6.28 });
+  }
+
+  // Birds (moving hazard), from zone-level 2.
   const B = [];
-  const birdCount = n >= 2 ? Math.min(Math.floor(n/2), 5) : 0;
+  const birdCount = zl >= 2 ? Math.min(Math.floor(d/2), 5) : 0;
   for (let i = 0; i < birdCount; i++){
     const bx = startX + 200 + rng() * (endCliffX - startX - 300);
     B.push({ x:bx, y:160 + rng()*180, baseY:0, amp:20+rng()*30, ph:rng()*6.28,
-             vx:(rng()<0.5?-1:1)*(1.1+Math.min(n*0.12,2)), flap:rng()*6.28 });
+             vx:(rng()<0.5?-1:1)*(1.1+Math.min(d*0.12,2)), flap:rng()*6.28 });
     B[B.length-1].baseY = B[B.length-1].y;
   }
 
-  // Spiky blocks floating in the sky — you must swing around them.
+  // Obstacles you must clear — spiky blocks in the Jungle, apartment blocks that
+  // rise into the swing path in the City (swing OVER their rooftops).
   const SP = [];
-  const spikeCount = n >= 2 ? Math.min(Math.floor(n/2)+1, 6) : 0;
+  const spikeCount = zl >= 2 ? Math.min(Math.floor(d/2)+1, 6) : 0;
   for (let i = 0; i < spikeCount; i++){
     const t = (i + 0.7) / (spikeCount + 0.4);
     let sx = startX + 220 + t * (endCliffX - startX - 360);
-    // nudge away from any treetop so a spike never sits on a grab point
+    // nudge away from any treetop so an obstacle never sits on a grab point
     for (const a of A){ if (Math.abs(a.x - sx) < 70){ sx += 90; } }
-    // Down in the swing path (so you actually have to dodge them). Some patrol
-    // side-to-side, some bob up and down.
-    const moves = rng() < 0.5;
-    SP.push({ x:sx, baseX:sx, y:360 + rng()*210, baseY:0, ph:rng()*6.28,
-              amp: moves?0:(16+rng()*22),
-              vx: moves?((rng()<0.5?-1:1)*(0.7+rng()*0.9)):0 });
-    SP[SP.length-1].baseY = SP[SP.length-1].y;
+    if (zone === 1){
+      // City: an apartment block rising from below — swing over the roof.
+      SP.push({ x:sx, baseX:sx, y: CLIFF_TOP - 30 - rng()*160, baseY:0, ph:0,
+                amp:0, vx:0, building:true, hw: 24 + rng()*12, seed: rng() });
+      SP[SP.length-1].baseY = SP[SP.length-1].y;
+    } else {
+      // Jungle: a spiky block down in the swing path; some bob, some patrol.
+      const moves = rng() < 0.5;
+      SP.push({ x:sx, baseX:sx, y:360 + rng()*210, baseY:0, ph:rng()*6.28,
+                amp: moves?0:(16+rng()*22),
+                vx: moves?((rng()<0.5?-1:1)*(0.7+rng()*0.9)):0 });
+      SP[SP.length-1].baseY = SP[SP.length-1].y;
+    }
   }
 
-  // Bees — a new hazard from level 4 that slowly chases you (dodge by swinging
-  // away). Adds variety beyond the static/patrolling obstacles.
+  // Bees — a Jungle-only hazard from zone-level 4 that slowly chases you (dodge
+  // by swinging away). Adds variety beyond the static/patrolling obstacles.
   const BE = [];
-  const beeCount = n >= 4 ? Math.min(Math.floor((n-2)/2), 4) : 0;
+  const beeCount = (zone === 0 && zl >= 4) ? Math.min(Math.floor((d-2)/2), 4) : 0;
   for (let i = 0; i < beeCount; i++){
     const bx = startX + 300 + rng() * (endCliffX - startX - 420);
-    BE.push({ x:bx, y:240 + rng()*180, vx:0, vy:0, wing:rng()*6.28, spd:0.9 + Math.min(n*0.05, 0.9) });
+    BE.push({ x:bx, y:240 + rng()*180, vx:0, vy:0, wing:rng()*6.28, spd:0.9 + Math.min(d*0.05, 0.9) });
   }
 
   // Invincibility banana — a golden banana that makes you invincible for a few
@@ -466,8 +531,8 @@ function genLevel(n){
     PW.push({ x:a.x + (rng()-0.5)*40, y:a.y + 95 + rng()*70, got:false, bob:rng()*6.28 });
   }
 
-  // From level 8, gusty wind nudges you in the air (drifts your flight).
-  const wind = n >= 8 ? (0.05 + Math.min((n-8)*0.006, 0.06)) : 0;
+  // From difficulty 8, gusty wind nudges you in the air (drifts your flight).
+  const wind = d >= 8 ? (0.05 + Math.min((d-8)*0.006, 0.06)) : 0;
 
   const isBoss = (n % 3 === 0);
   // Frying pan on boss levels (you need it for the gorilla).
@@ -476,7 +541,7 @@ function genLevel(n){
     const a = A[(A.length/2)|0];
     P = { x:a.x + spacing*0.4, y:a.y + 120, got:false, bob:0 };
   }
-  return { n, len:levelLen, endCliffX, anchors:A, trees:T, monkeys:M, coins:C, birds:B, spikes:SP, bees:BE, powerups:PW, wind, pan:P, boss:isBoss, bossDone:false };
+  return { n, zone, zl, len:levelLen, endCliffX, anchors:A, trees:T, monkeys:M, coins:C, goldcoins:GC, birds:B, spikes:SP, bees:BE, powerups:PW, wind, pan:P, boss:isBoss, bossDone:false };
 }
 
 /* ============================================================================
@@ -489,7 +554,7 @@ function loadLevel(n){
   game.level = n;
   level   = genLevel(n);
   anchors = level.anchors; trees = level.trees; monkeys = level.monkeys;
-  coins   = level.coins;   birds = level.birds; pan = level.pan; spikes = level.spikes; bees = level.bees; powerups = level.powerups;
+  coins   = level.coins;   goldcoins = level.goldcoins; birds = level.birds; pan = level.pan; spikes = level.spikes; bees = level.bees; powerups = level.powerups;
   bananas = []; particles = []; coconuts = []; floatTexts = []; boss = null;
   clouds = clouds || makeClouds();
   game.armed = false; game.camX = 0; game.state = S.PLAY; game.timer = 0; game.panMsg = 0;
@@ -510,7 +575,7 @@ function loseLife(reason){
   if (player.invuln > 0) return;   // truly invincible: shrug off EVERYTHING, including falls
   game.diedInBoss = (game.state === S.BOSS);   // a boss hit re-fights only the boss
   game.lives--; game.shake = 16;
-  spawnSplat(player.x, player.y, reason==='banana'?'#ffd23f':'#c86b3a');
+  spawnSplat(player.x, player.y, reason==='zap'?'#fff36b':reason==='banana'?'#ffd23f':'#c86b3a');
   blip(140, 0.25, 'sawtooth');
   if (game.lives <= 0){
     game.state = S.OVER; game.timer = 0; clearProgress();
@@ -584,6 +649,7 @@ function step(){
   if (game.shake > 0.5) game.shake *= 0.86; else game.shake = 0;
   if (game.panMsg > 0) game.panMsg--;
   if (game.hint  > 0) game.hint--;
+  if (game.resetArm > 0) game.resetArm--;
   if (shakeCd > 0) shakeCd--;
 
   if (game.state === S.DYING){ if (--game.timer<=0){ if (game.diedInBoss){ game.diedInBoss=false; enterBoss(); } else retryLevel(); } updateParticles(); return; }
@@ -613,6 +679,10 @@ function step(){
   // Mini-sausages.
   for (const c of coins){ if (c.got) continue; c.bob += 0.1;
     if (Math.hypot(c.x-p.x, c.y-p.y) < 30){ c.got=true; game.coins++; blip(1040,0.06); spawnText(c.x,c.y-10,'+1','#ffd27a'); for(let i=0;i<6;i++) spawnSpark(c.x,c.y,'#e0824a'); } }
+
+  // Gold coins — banked permanently (for the costume shop).
+  for (const gc of goldcoins){ if (gc.got) continue; gc.bob += 0.08;
+    if (Math.hypot(gc.x-p.x, gc.y-p.y) < 30){ gc.got=true; addGold(1); blip(1320,0.06); blip(1760,0.07); spawnText(gc.x,gc.y-12,'+1 GOLD','#ffd24a'); for(let i=0;i<10;i++) spawnSpark(gc.x,gc.y,'#ffd24a'); } }
 
   // Invincibility bananas.
   if (p.invuln > 0) p.invuln--;
@@ -651,8 +721,13 @@ function step(){
     if (bd.x < CLIFF_W-40 || bd.x > level.endCliffX+40) bd.vx *= -1;
     if (p.iframe<=0 && Math.hypot(bd.x-p.x,bd.y-p.y) < p.r+14){ p.iframe=1; loseLife('bird'); } }
 
-  // Spiky blocks in the swing path; some bob, some patrol side-to-side.
+  // Obstacles. City apartment blocks are solid from their rooftop down (swing
+  // over them); jungle spiky blocks bob/patrol in the swing path.
   for (const s of spikes){
+    if (s.building){
+      if (p.iframe<=0 && Math.abs(s.x-p.x) < s.hw+p.r && p.y > s.y - p.r){ p.iframe=1; loseLife('spike'); }
+      continue;
+    }
     if (s.amp) s.y = s.baseY + Math.sin(s.ph + game.t*0.02)*s.amp;
     if (s.vx){ s.x += s.vx; if (Math.abs(s.x - s.baseX) > 85) s.vx *= -1; }
     if (p.iframe<=0 && Math.abs(s.x-p.x) < p.r+18 && Math.abs(s.y-p.y) < p.r+18){ p.iframe=1; loseLife('spike'); } }
@@ -851,8 +926,10 @@ function updateClouds(){ for(const c of clouds){ c.x-=c.sp; if(c.x<-200) c.x+=34
 function render(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   const W=cvs.width/dpr, H=cvs.height/dpr;
+  const z = level ? level.zone : 0;
   const sky=ctx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0,'#79c6e8'); sky.addColorStop(0.7,'#bfe9f5'); sky.addColorStop(1,'#e9f8ef');
+  if (z===1){ sky.addColorStop(0,'#243a63'); sky.addColorStop(0.62,'#6a5c8e'); sky.addColorStop(1,'#e7a95e'); }   // City dusk
+  else { sky.addColorStop(0,'#79c6e8'); sky.addColorStop(0.7,'#bfe9f5'); sky.addColorStop(1,'#e9f8ef'); }        // Jungle day
   ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
 
   const sh=game.shake>0.5?game.shake:0, shx=sh?(Math.random()*2-1)*sh:0, shy=sh?(Math.random()*2-1)*sh:0;
@@ -870,11 +947,41 @@ function render(){
 }
 
 function drawParallax(){
+  if (level && level.zone === 1){ cityParallax(); windStreaks(); return; }
   ctx.fillStyle='rgba(255,244,190,0.9)'; ctx.beginPath(); ctx.arc(VW-70,90,46,0,6.29); ctx.fill();
   ctx.fillStyle='rgba(255,255,255,0.85)';
   for(const c of clouds){ const x=c.x-game.camX*0.3, xx=((x%(VW+400))+(VW+400))%(VW+400)-200; cloud(xx,c.y,34*c.s); }
   hills(-game.camX*0.4, CLIFF_TOP+40, 0.6, '#8fd08a');
   hills(-game.camX*0.55+140, CLIFF_TOP+68, 0.8, '#79c47a');
+  windStreaks();
+}
+// A repeating skyline of tall buildings with lit windows, two parallax layers.
+function skyline(off, baseY, cols, seedShift){
+  let x = ((-off % 90)+90)%90 - 90;
+  let k = Math.floor(off/90) + seedShift;
+  while (x < VW+60){
+    const h = 120 + ((k*73)%5)*46 + ((k*29)%3)*24;
+    const w = 46 + ((k*17)%3)*14;
+    ctx.fillStyle = cols.body;
+    ctx.fillRect(x, baseY-h, w, h+40);
+    // windows
+    ctx.fillStyle = cols.win;
+    for (let wy=baseY-h+12; wy<baseY-10; wy+=18){
+      for (let wx=x+7; wx<x+w-8; wx+=13){
+        if (((k*7 + (wy|0)*3 + (wx|0)) % 5) < 3) ctx.fillRect(wx, wy, 7, 10);
+      }
+    }
+    x += w + 8; k++;
+  }
+}
+function cityParallax(){
+  // hazy moon
+  ctx.fillStyle='rgba(255,240,210,0.55)'; ctx.beginPath(); ctx.arc(VW-72,86,38,0,6.29); ctx.fill();
+  // far skyline (dim, slow) then near skyline (darker, faster)
+  skyline(game.camX*0.25, CLIFF_TOP+30, { body:'#3a3f63', win:'rgba(255,225,140,0.5)' }, 0);
+  skyline(game.camX*0.5,  CLIFF_TOP+66, { body:'#262a45', win:'rgba(255,220,120,0.75)' }, 11);
+}
+function windStreaks(){
   // Wind streaks (from level 8) drifting in the current gust direction.
   if (level && level.wind && (game.state===S.PLAY)){
     const dir = Math.sin(game.t*0.006) >= 0 ? 1 : -1;
@@ -894,13 +1001,15 @@ function hills(off,y,amp,col){ ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(0,
 function drawWorld(){
   const rav=ctx.createLinearGradient(0,CLIFF_TOP,0,VH); rav.addColorStop(0,'rgba(40,70,60,0)'); rav.addColorStop(1,'rgba(20,40,35,0.55)');
   ctx.fillStyle=rav; ctx.fillRect(game.camX,CLIFF_TOP,VW,VH-CLIFF_TOP);
+  for(const s of spikes) if(s.building) drawBuilding(s);   // city blocks sit behind the cables
   for(const t of trees) drawTree(t);
   for(const c of coins) if(!c.got) drawCoin(c.x, c.y+Math.sin(c.bob)*5);
+  for(const gc of goldcoins) if(!gc.got) drawGold(gc.x, gc.y+Math.sin(gc.bob)*5);
   for(const g of powerups) if(!g.got) drawGolden(g.x, g.y+Math.sin(g.bob)*6);
   if(pan && !pan.got) drawPan(pan.x, pan.y+Math.sin(pan.bob)*6);
   drawCliff(0,CLIFF_W,true); drawCliff(level.endCliffX,CLIFF_W,false); drawFinishLine(level.endCliffX);
   for(const m of monkeys) if(m.alive) drawMonkey(m.x,m.y);
-  for(const s of spikes) drawSpike(s.x, s.y);
+  for(const s of spikes) if(!s.building) drawSpike(s.x, s.y);
   for(const bee of bees) drawBee(bee);
   for(const b of birds) drawBird(b);
   for(const c of coconuts) drawCoconut(c.x,c.y);
@@ -917,6 +1026,15 @@ function drawParticles(){
 
 function drawCliff(x,w,isStart){
   const top=CLIFF_TOP;
+  if (level && level.zone === 1){
+    // City rooftop: concrete slab with a parapet edge + lit windows down the face.
+    ctx.fillStyle='#4a4e5e'; ctx.fillRect(x,top,w,VH-top);
+    ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fillRect(x,top+16,w,VH-top);
+    ctx.fillStyle='#6d7284'; ctx.fillRect(x,top-8,w,12);
+    ctx.fillStyle='rgba(255,222,130,0.7)';
+    for(let wy=top+22; wy<VH; wy+=22){ for(let wx=x+8; wx<x+w-8; wx+=20){ if(((wx+wy)|0)%3) ctx.fillRect(wx,wy,10,13); } }
+    return;
+  }
   ctx.fillStyle='#9a8b76'; ctx.fillRect(x,top,w,VH-top);
   ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(x,top+18,w,VH-top);
   ctx.fillStyle='#57b94f'; ctx.fillRect(x,top-10,w,18);
@@ -947,6 +1065,7 @@ function drawFinishLine(x){
   roundRect(-30,-14,60,20,6); ctx.fill(); ctx.fillStyle='#20242b'; ctx.fillText('FINISH',0,0); ctx.restore();
 }
 function drawTree(t){
+  if (level && level.zone === 1){ drawCable(t); return; }
   // A moving vine's top tracks its (drifting) anchor.
   const topX = t.anchor && t.anchor.mv ? t.anchor.x : t.x + Math.sin(game.t*0.02+t.sway)*4;
   const sway = topX - t.x;
@@ -960,6 +1079,70 @@ function drawTree(t){
   // grab knob (highlighted so kids can see where to tap)
   ctx.fillStyle='rgba(60,40,25,0.85)'; ctx.beginPath(); ctx.arc(t.x+sway,t.top,6,0,6.29); ctx.fill();
   ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(t.x+sway,t.top,9,0,6.29); ctx.stroke();
+}
+// City: a utility pole holding an electricity cable you swing on. LIVE cables
+// crackle yellow and zap you if you grab them.
+function drawCable(t){
+  const a = t.anchor;
+  const topX = a && a.mv ? a.x : t.x + Math.sin(game.t*0.02+t.sway)*3;
+  const live = a && a.live;
+  // pole down to the ground
+  ctx.strokeStyle='#3b3f4a'; ctx.lineWidth=9; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(t.x, VH+20); ctx.lineTo(t.x, t.top-4); ctx.stroke();
+  // cross-arm
+  ctx.strokeStyle='#2e323b'; ctx.lineWidth=6;
+  ctx.beginPath(); ctx.moveTo(t.x-22, t.top+8); ctx.lineTo(t.x+22, t.top+8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(t.x-22, t.top+22); ctx.lineTo(t.x+22, t.top+22); ctx.stroke();
+  // the swing cable, sagging from the cross-arm
+  ctx.strokeStyle = live ? '#ffe14d' : '#11141b';
+  ctx.lineWidth = live ? 5 : 4;
+  ctx.beginPath(); ctx.moveTo(t.x-40, t.top+14);
+  ctx.quadraticCurveTo(topX, t.top+34, t.x+40, t.top+14); ctx.stroke();
+  if (live){
+    // crackling glow + little lightning arcs
+    ctx.save(); ctx.shadowColor='#fff36b'; ctx.shadowBlur=12;
+    ctx.strokeStyle='#fff7b0'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(t.x-40, t.top+14); ctx.quadraticCurveTo(topX, t.top+32, t.x+40, t.top+14); ctx.stroke();
+    ctx.restore();
+    if (Math.floor(game.t/6)%2===0){
+      ctx.strokeStyle='#fff3a0'; ctx.lineWidth=2; ctx.beginPath();
+      let zx=topX-14, zy=t.top+26;
+      for(let s=0;s<4;s++){ ctx.moveTo(zx,zy); zx+=8; zy+= (s%2?-8:8); ctx.lineTo(zx,zy); }
+      ctx.stroke();
+    }
+  }
+  // insulators + grab knob
+  ctx.fillStyle='#6a5030'; ctx.beginPath(); ctx.arc(t.x-22,t.top+14,3.5,0,6.29); ctx.arc(t.x+22,t.top+14,3.5,0,6.29); ctx.fill();
+  ctx.fillStyle = live ? 'rgba(255,240,120,0.95)' : 'rgba(230,235,245,0.9)';
+  ctx.beginPath(); ctx.arc(topX, t.top+30, 6, 0, 6.29); ctx.fill();
+  ctx.strokeStyle = live ? 'rgba(255,255,150,0.8)' : 'rgba(255,255,255,0.5)';
+  ctx.lineWidth=2; ctx.beginPath(); ctx.arc(topX, t.top+30, 9, 0, 6.29); ctx.stroke();
+}
+// City obstacle: an apartment block rising into the swing path.
+function drawBuilding(s){
+  const top = s.y, w = s.hw*2, x = s.x - s.hw;
+  ctx.fillStyle='#3a3d52'; ctx.fillRect(x, top, w, VH - top + 20);
+  ctx.fillStyle='#2c2f42'; ctx.fillRect(x, top, w, 8);            // roof lip
+  // lit + dark windows
+  for (let wy=top+16; wy<VH; wy+=20){
+    for (let wx=x+7; wx<x+w-7; wx+=15){
+      const on = ((Math.floor(s.seed*90) + (wy|0)*3 + (wx|0)) % 4) < 2;
+      ctx.fillStyle = on ? 'rgba(255,222,130,0.85)' : 'rgba(20,22,34,0.6)';
+      ctx.fillRect(wx, wy, 9, 12);
+    }
+  }
+}
+// A gold coin stamped with a sausage — the shop currency.
+function drawGold(x,y){
+  ctx.save(); ctx.translate(x,y);
+  const r = 15 + Math.sin(game.t*0.15)*1.5;
+  const grad=ctx.createRadialGradient(-4,-4,2,0,0,r); grad.addColorStop(0,'#ffe98a'); grad.addColorStop(0.6,'#f5c542'); grad.addColorStop(1,'#c9970f');
+  ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(0,0,r,0,6.29); ctx.fill();
+  ctx.strokeStyle='#a5780a'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,r,0,6.29); ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(0,0,r-4,0,6.29); ctx.stroke();
+  // little embossed sausage
+  ctx.save(); ctx.rotate(0.5); ctx.fillStyle='#b9760f'; ctx.strokeStyle='#8a5709'; ctx.lineWidth=1.6; capsulePath(0,0,4.5,12); ctx.fill(); ctx.stroke(); ctx.restore();
+  ctx.restore();
 }
 
 function drawPlayer(p){
@@ -1003,12 +1186,30 @@ function drawFace(x,y,mood){
     ctx.fillRect(x-3,y-2,6,2); ctx.fillRect(x-16,y-2,3,2); }
 }
 function drawMonkey(mx,my){
+  if (level && level.zone === 1){ drawKid(mx,my); return; }
   ctx.save(); ctx.translate(mx,my-14+Math.sin(game.t*0.1)*2);
   ctx.strokeStyle='#6b4a2f'; ctx.lineWidth=4; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(6,6); ctx.quadraticCurveTo(22,4,20,-12); ctx.stroke();
   ctx.fillStyle='#7a5334'; ctx.beginPath(); ctx.ellipse(0,4,12,14,0,0,6.29); ctx.fill(); ctx.beginPath(); ctx.arc(0,-12,11,0,6.29); ctx.fill();
   ctx.fillStyle='#d9b892'; ctx.beginPath(); ctx.ellipse(0,-9,7,8,0,0,6.29); ctx.fill();
   ctx.fillStyle='#7a5334'; ctx.beginPath(); ctx.arc(-11,-14,4.5,0,6.29); ctx.arc(11,-14,4.5,0,6.29); ctx.fill();
   ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(-3,-12,1.8,0,6.29); ctx.arc(3,-12,1.8,0,6.29); ctx.fill();
+  ctx.restore();
+}
+// City enemy/helper: a kid with a slingshot.
+function drawKid(mx,my){
+  ctx.save(); ctx.translate(mx,my-14+Math.sin(game.t*0.1)*2);
+  // body (hoodie) + head
+  ctx.fillStyle='#d24b4b'; ctx.beginPath(); ctx.ellipse(0,4,10,12,0,0,6.29); ctx.fill();
+  ctx.fillStyle='#f0c49a'; ctx.beginPath(); ctx.arc(0,-11,9,0,6.29); ctx.fill();
+  // cap
+  ctx.fillStyle='#2f6bd2'; ctx.beginPath(); ctx.arc(0,-13,9,Math.PI,0); ctx.fill();
+  ctx.fillRect(-9,-14,13,3); ctx.fillStyle='#2f6bd2'; ctx.fillRect(4,-14,10,3);
+  // eyes
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(-3,-11,1.6,0,6.29); ctx.arc(3,-11,1.6,0,6.29); ctx.fill();
+  // slingshot in hand (Y shape + band)
+  ctx.strokeStyle='#7a4a20'; ctx.lineWidth=2.5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(10,2); ctx.lineTo(15,-6); ctx.moveTo(11,-1); ctx.lineTo(9,-9); ctx.moveTo(11,-1); ctx.lineTo(17,-3); ctx.stroke();
+  ctx.strokeStyle='rgba(60,40,25,0.7)'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.moveTo(9,-9); ctx.lineTo(13,-3); ctx.lineTo(17,-3); ctx.stroke();
   ctx.restore();
 }
 function drawBird(b){
@@ -1069,34 +1270,51 @@ function panIcon(x,y,s){ ctx.save(); ctx.translate(x,y); ctx.scale(s,s); ctx.str
 
 /* ---------- Boss arena render ---------- */
 function renderBoss(){
-  // jungle backdrop
-  hills(120, CLIFF_TOP+30, 0.7, '#8fd08a'); hills(260, CLIFF_TOP+60, 0.9, '#79c47a');
-  ctx.fillStyle='rgba(255,255,255,0.8)'; cloud(90,90,30); cloud(330,60,26);
-  // swingable vines — tap one to swing in at the gorilla
-  for(const a of anchors){ ctx.strokeStyle='#3fa34d'; ctx.lineWidth=7; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(a.x,0);
+  const cz = level ? level.zone : 0;
+  if (cz === 1){
+    // City backdrop: skyline of buildings.
+    skyline(60, CLIFF_TOP+20, { body:'#3a3f63', win:'rgba(255,225,140,0.5)' }, 3);
+    skyline(150, CLIFF_TOP+58, { body:'#262a45', win:'rgba(255,220,120,0.75)' }, 20);
+  } else {
+    // jungle backdrop
+    hills(120, CLIFF_TOP+30, 0.7, '#8fd08a'); hills(260, CLIFF_TOP+60, 0.9, '#79c47a');
+    ctx.fillStyle='rgba(255,255,255,0.8)'; cloud(90,90,30); cloud(330,60,26);
+  }
+  // swingable vines / metal cables — tap one to swing in at the gorilla
+  for(const a of anchors){
+    ctx.strokeStyle = cz===1 ? '#11141b' : '#3fa34d'; ctx.lineWidth=7; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(a.x,0);
     for(let y=0;y<a.y;y+=18){ ctx.lineTo(a.x+Math.sin(y*0.05+game.t*0.02)*5, y); } ctx.lineTo(a.x,a.y); ctx.stroke();
-    ctx.fillStyle='#2f8f3e'; ctx.beginPath(); ctx.arc(a.x,a.y-10,12,0,6.29); ctx.fill();
-    ctx.fillStyle='rgba(60,40,25,0.85)'; ctx.beginPath(); ctx.arc(a.x,a.y,6,0,6.29); ctx.fill();
+    if (cz===1){ ctx.fillStyle='#5a6070'; ctx.beginPath(); ctx.arc(a.x,a.y-10,9,0,6.29); ctx.fill(); }
+    else { ctx.fillStyle='#2f8f3e'; ctx.beginPath(); ctx.arc(a.x,a.y-10,12,0,6.29); ctx.fill(); }
+    ctx.fillStyle= cz===1 ? 'rgba(230,235,245,0.9)' : 'rgba(60,40,25,0.85)'; ctx.beginPath(); ctx.arc(a.x,a.y,6,0,6.29); ctx.fill();
     ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(a.x,a.y,9,0,6.29); ctx.stroke(); }
   // floor
-  ctx.fillStyle='#9a8b76'; ctx.fillRect(0,BOSS_FLOOR,VW,VH-BOSS_FLOOR);
-  ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(0,BOSS_FLOOR+18,VW,VH);
-  ctx.fillStyle='#57b94f'; ctx.fillRect(0,BOSS_FLOOR-10,VW,16);
+  if (cz === 1){
+    ctx.fillStyle='#4a4e5e'; ctx.fillRect(0,BOSS_FLOOR,VW,VH-BOSS_FLOOR);
+    ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fillRect(0,BOSS_FLOOR+18,VW,VH);
+    ctx.fillStyle='#6d7284'; ctx.fillRect(0,BOSS_FLOOR-8,VW,12);
+    ctx.strokeStyle='rgba(255,220,120,0.6)'; ctx.lineWidth=2; ctx.setLineDash([14,12]);
+    ctx.beginPath(); ctx.moveTo(0,BOSS_FLOOR+30); ctx.lineTo(VW,BOSS_FLOOR+30); ctx.stroke(); ctx.setLineDash([]);
+  } else {
+    ctx.fillStyle='#9a8b76'; ctx.fillRect(0,BOSS_FLOOR,VW,VH-BOSS_FLOOR);
+    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(0,BOSS_FLOOR+18,VW,VH);
+    ctx.fillStyle='#57b94f'; ctx.fillRect(0,BOSS_FLOOR-10,VW,16);
+  }
   // helper monkeys
   for(const h of boss.helpers) drawMonkey(h.x, h.y-2+Math.sin(h.bob)*2);
   // gorilla
   drawGorilla(boss.g);
-  // projectiles
-  for(const bar of boss.barrels) drawBarrel(bar.x,bar.y,bar.spin);
-  for(const c of boss.cocos) drawCoconut(c.x,c.y);
-  for(const f of boss.fban) drawBanana(f.x,f.y,f.spin);
+  // projectiles — briefcases + falling zaps in the City, barrels + coconuts in the Jungle
+  for(const bar of boss.barrels) cz===1 ? drawBriefcase(bar.x,bar.y,bar.spin) : drawBarrel(bar.x,bar.y,bar.spin);
+  for(const c of boss.cocos) cz===1 ? drawZapBolt(c.x,c.y) : drawCoconut(c.x,c.y);
+  for(const f of boss.fban) cz===1 ? drawPebble(f.x,f.y) : drawBanana(f.x,f.y,f.spin);
   drawPlayer(player);
   drawParticles();
   // boss HP bar
   const g=boss.g, bw=VW-80, hpf=Math.max(0,g.hp/g.maxhp);
   ctx.fillStyle='rgba(0,0,0,0.35)'; roundRect(40,74,bw,16,8); ctx.fill();
   ctx.fillStyle='#ff5252'; roundRect(40,74,bw*hpf,16,8); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 13px system-ui'; ctx.textAlign='center'; ctx.fillText('GORILLA BOSS  •  Lvl '+level.n,VW/2,87);
+  ctx.fillStyle='#fff'; ctx.font='bold 13px system-ui'; ctx.textAlign='center'; ctx.fillText((cz===1?'CITY GORILLA':'GORILLA BOSS')+'  •  Lvl '+level.n,VW/2,87);
   // Pan-uses left.
   if(game.armed && game.panUses>0){ ctx.save(); ctx.translate(30,110); panIcon(0,0,0.8); ctx.restore();
     ctx.textAlign='left'; ctx.fillStyle='#fff'; ctx.font='bold 15px system-ui'; ctx.fillText('× '+game.panUses,46,114); }
@@ -1105,7 +1323,7 @@ function renderBoss(){
   if(boss.intro>0){ ctx.globalAlpha=clamp(boss.intro/160,0,1); ctx.fillStyle='#fff'; ctx.font='bold 25px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=5; ctx.textAlign='center';
     const msg = 'Swing onto his HEAD!';
     ctx.strokeText(msg,VW/2,VH*0.28); ctx.fillText(msg,VW/2,VH*0.28);
-    ctx.font='bold 15px system-ui'; const sub = game.armed ? 'Pan hits do double — it breaks after 2' : (boss.helpers.length ? ('Your '+boss.helpers.length+' monkey pals are helping!') : 'Only landing on his head hurts him!');
+    ctx.font='bold 15px system-ui'; const pals = cz===1 ? 'slingshot pals' : 'monkey pals'; const sub = game.armed ? 'Pan hits do double — it breaks after 2' : (boss.helpers.length ? ('Your '+boss.helpers.length+' '+pals+' are helping!') : 'Only landing on his head hurts him!');
     ctx.fillText(sub,VW/2,VH*0.28+26);
     ctx.font='bold 14px system-ui'; ctx.fillText('tap a vine to grab   ◀ ▶ walk   ⤒ jump',VW/2,VH*0.28+50); ctx.globalAlpha=1; }
 }
@@ -1120,6 +1338,7 @@ function drawDpad(){
     ctx.font='bold 12px system-ui'; ctx.textAlign='center'; ctx.fillText('JUMP',b.x,b.y+20); });
 }
 function drawGorilla(g){
+  const suit = (level && level.zone === 1);   // City boss wears a business suit + shades
   ctx.save(); ctx.translate(g.x, g.y);
   if(g.hurt>0 && Math.floor(game.t/3)%2===0) ctx.globalAlpha=0.6;
   const bob=Math.sin(g.anim)*3, arm=Math.max(0,Math.sin(g.anim*2))*10;
@@ -1128,22 +1347,47 @@ function drawGorilla(g){
   ctx.beginPath(); ctx.ellipse(-16,-6,11,14,0,0,6.29); ctx.ellipse(16,-6,11,14,0,0,6.29); ctx.fill();
   // body
   ctx.beginPath(); ctx.ellipse(0,-48+bob,34,38,0,0,6.29); ctx.fill();
-  ctx.fillStyle='#5a5a68'; ctx.beginPath(); ctx.ellipse(0,-42+bob,20,26,0,0,6.29); ctx.fill();
+  if(suit){
+    // dark suit jacket with white shirt + tie
+    ctx.fillStyle='#20232e'; ctx.beginPath(); ctx.ellipse(0,-46+bob,32,36,0,0,6.29); ctx.fill();
+    ctx.fillStyle='#f2f2f4'; ctx.beginPath(); ctx.moveTo(-9,-70+bob); ctx.lineTo(9,-70+bob); ctx.lineTo(4,-22+bob); ctx.lineTo(-4,-22+bob); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#b5232a'; ctx.beginPath(); ctx.moveTo(0,-66+bob); ctx.lineTo(-5,-56+bob); ctx.lineTo(0,-30+bob); ctx.lineTo(5,-56+bob); ctx.closePath(); ctx.fill();
+    // lapels
+    ctx.fillStyle='#171922'; ctx.beginPath(); ctx.moveTo(-9,-70+bob); ctx.lineTo(-2,-64+bob); ctx.lineTo(-9,-40+bob); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(9,-70+bob); ctx.lineTo(2,-64+bob); ctx.lineTo(9,-40+bob); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle='#5a5a68'; ctx.beginPath(); ctx.ellipse(0,-42+bob,20,26,0,0,6.29); ctx.fill();
+  }
   // arms
-  ctx.fillStyle='#3b3b45'; ctx.lineWidth=0;
+  ctx.fillStyle= suit ? '#20232e' : '#3b3b45'; ctx.lineWidth=0;
   ctx.beginPath(); ctx.ellipse(-40,-40+bob-arm,10,26,0.2,0,6.29); ctx.fill();
   ctx.beginPath(); ctx.ellipse(40,-40+bob-arm,10,26,-0.2,0,6.29); ctx.fill();
   // head
-  ctx.beginPath(); ctx.ellipse(0,-92+bob,24,22,0,0,6.29); ctx.fill();
+  ctx.fillStyle='#3b3b45'; ctx.beginPath(); ctx.ellipse(0,-92+bob,24,22,0,0,6.29); ctx.fill();
   ctx.fillStyle='#6a6a78'; ctx.beginPath(); ctx.ellipse(0,-86+bob,15,13,0,0,6.29); ctx.fill();
-  // face
-  ctx.fillStyle='#1e1e26'; ctx.beginPath(); ctx.arc(-7,-92+bob,3,0,6.29); ctx.arc(7,-92+bob,3,0,6.29); ctx.fill();
   ctx.fillStyle='#c98a5a'; ctx.beginPath(); ctx.ellipse(0,-82+bob,7,4,0,0,6.29); ctx.fill();
+  if(suit){
+    // sunglasses
+    ctx.fillStyle='#0c0d12'; roundRect(-15,-96+bob,12,8,2); ctx.fill(); roundRect(3,-96+bob,12,8,2); ctx.fill();
+    ctx.fillRect(-3,-94+bob,6,2);
+    ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fillRect(-13,-95+bob,4,2); ctx.fillRect(5,-95+bob,4,2);
+  } else {
+    ctx.fillStyle='#1e1e26'; ctx.beginPath(); ctx.arc(-7,-92+bob,3,0,6.29); ctx.arc(7,-92+bob,3,0,6.29); ctx.fill();
+  }
   // angry brow
   ctx.strokeStyle='#1e1e26'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-12,-98+bob); ctx.lineTo(-3,-95+bob); ctx.moveTo(12,-98+bob); ctx.lineTo(3,-95+bob); ctx.stroke();
   ctx.restore();
 }
 function drawBarrel(x,y,spin){ ctx.save(); ctx.translate(x,y); ctx.rotate(spin); ctx.fillStyle='#8a5a2b'; roundRect(-14,-11,28,22,6); ctx.fill(); ctx.strokeStyle='#5e3d1c'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-14,-4); ctx.lineTo(14,-4); ctx.moveTo(-14,4); ctx.lineTo(14,4); ctx.stroke(); ctx.restore(); }
+// City boss throwables.
+function drawBriefcase(x,y,spin){ ctx.save(); ctx.translate(x,y); ctx.rotate(Math.sin(spin)*0.2);
+  ctx.fillStyle='#6a4a2a'; roundRect(-15,-11,30,22,3); ctx.fill(); ctx.strokeStyle='#3d2a15'; ctx.lineWidth=2; roundRect(-15,-11,30,22,3); ctx.stroke();
+  ctx.strokeStyle='#c9a24a'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-6,-11); ctx.lineTo(-6,-16); ctx.lineTo(6,-16); ctx.lineTo(6,-11); ctx.stroke();
+  ctx.fillStyle='#c9a24a'; ctx.fillRect(-3,-2,6,4); ctx.restore(); }
+function drawZapBolt(x,y){ ctx.save(); ctx.translate(x,y);
+  ctx.shadowColor='#fff36b'; ctx.shadowBlur=10; ctx.fillStyle='#ffe14d'; ctx.strokeStyle='#c99a00'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(2,-13); ctx.lineTo(-6,1); ctx.lineTo(-1,1); ctx.lineTo(-3,13); ctx.lineTo(7,-3); ctx.lineTo(1,-3); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+function drawPebble(x,y){ ctx.save(); ctx.translate(x,y); ctx.fillStyle='#8a929c'; ctx.beginPath(); ctx.arc(0,0,7,0,6.29); ctx.fill(); ctx.fillStyle='#6a727c'; ctx.beginPath(); ctx.arc(-2,-2,2,0,6.29); ctx.fill(); ctx.restore(); }
 
 /* ---------- HUD ---------- */
 function drawHUD(){
@@ -1156,6 +1400,11 @@ function drawHUD(){
   // coin counter (mini-sausage)
   ctx.save(); ctx.translate(30,68); ctx.scale(0.7,0.7); ctx.rotate(0.5); ctx.fillStyle='#e0824a'; ctx.strokeStyle='#a4531f'; ctx.lineWidth=3; capsulePath(0,0,7,18); ctx.fill(); ctx.stroke(); ctx.restore();
   ctx.textAlign='left'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 16px system-ui'; ctx.fillText('x '+game.coins,42,74);
+  // gold counter (persistent — for the shop)
+  ctx.save(); ctx.translate(30,92); ctx.scale(0.62,0.62); drawGold(0,0); ctx.restore();
+  ctx.textAlign='left'; ctx.fillStyle='#8a6a12'; ctx.font='bold 16px system-ui'; ctx.fillText('x '+game.gold,42,98);
+  // zone label
+  if(level){ ctx.textAlign='center'; ctx.fillStyle=level.zone===1?'#ffe6a0':'#1e3a2e'; ctx.font='bold 12px system-ui'; ctx.fillText((ZONE_NAMES[level.zone]||'').toUpperCase()+' • '+level.zl+'/10', VW/2, 20); }
   // armed
   if(game.armed && game.state!==S.BOSS){ ctx.save(); ctx.translate(VW-28,80); panIcon(0,0,0.85); ctx.restore(); ctx.textAlign='right'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 13px system-ui'; ctx.fillText('armed!',VW-44,84); }
   // progress bar (normal levels)
@@ -1201,6 +1450,14 @@ function drawOverlays(){
     // nickname (tap to change)
     ctx.fillStyle='#cfe0d8'; ctx.font='bold 15px system-ui'; ctx.fillText('👤 '+(getName()||'tap to set your name')+'   ✎', VW/2, VH*0.95);
     ctx.textAlign='right'; ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='12px system-ui'; ctx.fillText(GAME_VERSION, VW-8, VH-8); ctx.textAlign='center';
+    // gold total (spend it in the shop — coming soon)
+    ctx.save(); ctx.translate(VW/2-52,VH*0.155); ctx.scale(0.9,0.9); drawGold(0,0); ctx.restore();
+    ctx.fillStyle='#ffe6a0'; ctx.font='bold 18px system-ui'; ctx.textAlign='left'; ctx.fillText('x '+game.gold+'  gold', VW/2-34, VH*0.155+6); ctx.textAlign='center';
+    // reset-everything button (top-right)
+    const armed=game.resetArm>0; ctx.fillStyle=armed?'#e0574a':'rgba(255,255,255,0.16)';
+    roundRect(RESETBTN.x-RESETBTN.w/2,RESETBTN.y-RESETBTN.h/2,RESETBTN.w,RESETBTN.h,15); ctx.fill();
+    ctx.fillStyle=armed?'#fff':'#eaf6ef'; ctx.font='bold 13px system-ui'; ctx.textAlign='center';
+    ctx.fillText(armed?'Sure? Tap':'🔄 Reset', RESETBTN.x, RESETBTN.y+5);
     drawMuteBtn();
     if(game.partyMsg>0){ game.partyMsg--; ctx.fillStyle='#ffd23f'; ctx.font='bold 22px system-ui'; ctx.fillText(game.party?'🎉 PARTY SAUSAGE! 🎉':'party off', VW/2, VH*0.20); }
     drawConfetti();
@@ -1292,7 +1549,7 @@ function frame(now){
   render(); requestAnimationFrame(frame);
 }
 clouds=makeClouds(); level=genLevel(1); anchors=level.anchors; trees=level.trees;
-monkeys=[]; bananas=[]; particles=[]; coins=[]; birds=[]; coconuts=[]; spikes=[]; bees=[]; powerups=[]; floatTexts=[];
+monkeys=[]; bananas=[]; particles=[]; coins=[]; goldcoins=[]; birds=[]; coconuts=[]; spikes=[]; bees=[]; powerups=[]; floatTexts=[];
 player={x:CLIFF_W-40,y:CLIFF_TOP-STAND_DY,vx:0,vy:0,mode:'stand',ax:0,ay:0,L:0,curA:null,iframe:0,invuln:0,face:'happy',legPh:0,r:15,onGround:true};
 requestAnimationFrame(frame);
 // Nickname entry.

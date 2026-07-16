@@ -41,10 +41,35 @@ rope, and **P** does a swing pump (stands in for shaking).
   the online leaderboard.
 - **Music**: a looping chiptune plays while you play (a spookier one for boss
   fights). Toggle it with the 🔊/🔇 button on the menu or in-play.
-- **Version number** is shown in the corner of the menu (currently **v13**), so
+- **Version number** is shown in the corner of the menu (currently **v16**), so
   you can confirm you're on the latest build. Opening the game with an internet
   connection always loads the newest version.
+- **Gold coins** (stamped with a sausage) are scattered across every zone and
+  banked **permanently** — a shown-on-the-menu total you'll spend in the coming
+  costume shop. They're separate from mini-sausages (which become boss helpers).
+- **Reset to Zone 1** button (top-right of the menu) starts a brand-new run from
+  the very first Jungle level. It needs a confirming second tap ("Sure? Tap"),
+  and it keeps your gold and your leaderboard entry.
 - **Secret:** tap the sausage on the menu five times… 🎉
+
+## Zones
+
+The world changes theme every 10 levels, and **difficulty resets** at the start
+of each new zone — but with a nudge, so zone-2 level 5 is a touch harder than
+zone-1 level 5, yet still easier than zone-1 level 6.
+
+- **Jungle** (levels 1–9): swing tree-to-tree over the ravine; monkeys throw
+  bananas; coconut trees, bees, spiky blocks.
+- **City** (levels 10–19): swing on **electricity cables** strung between utility
+  poles against a dusk skyline of tall buildings. Some cables are **LIVE** —
+  they crackle yellow, and grabbing one **zaps you** (there's always a safe
+  route: no two live cables in a row). The obstacles are **apartment blocks**
+  rising into your path (swing over the rooftops); the enemies are **kids with
+  slingshots**; the boss is a **gorilla in a business suit and sunglasses** who
+  lobs **briefcases** and rains **electric zaps**, helped against by your
+  slingshot-kid pals, over **metal boss cables**. Its own cooler city soundtrack
+  plays too.
+- **Mineshaft** (level 20+): *coming soon.*
 
 ## Levels
 
