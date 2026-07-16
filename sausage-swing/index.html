@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v14';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v15';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -704,17 +704,16 @@ const BOSS_STAND = BOSS_FLOOR - STAND_DY;   // player's feet-on-floor y
 function enterBoss(){
   game.state = S.BOSS; game.arena = true; game.camX = 0; game.timer = 0;
   const tier = level.n / 3;                       // 1,2,3...
-  const maxFull = 5 + (tier-1)*5;                  // scales up steeply each boss
-  const hp = game.bossHP > 0 ? game.bossHP : maxFull;   // resume damage across retries
+  const hp = 5 + (tier-1)*5;                       // scales up steeply each boss
   boss = {
-    g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:maxFull, tier, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
+    g: { x:VW-84, y:BOSS_FLOOR, hp, maxhp:hp, tier, iframe:0, cd:110, beatCd:230, anim:0, hurt:0 },
     helpers: [], barrels: [], cocos: [], fban: [], intro: 160,
   };
   const helperN = Math.min(game.coins, HELPER_CAP);
   for (let i=0;i<helperN;i++) boss.helpers.push({ x:22+i*26, y:BOSS_FLOOR, cd:40+i*16, bob:i, gone:false });
   // Swingable vines — the right one is positioned so a good swing carries you
   // into the gorilla. All kept left of it (you can't get behind).
-  anchors = [ {x:VW*0.26, y:150}, {x:VW*0.44, y:118}, {x:VW*0.60, y:116}, {x:VW*0.77, y:140} ];
+  anchors = [ {x:VW*0.30, y:150}, {x:VW*0.48, y:118}, {x:VW*0.64, y:116}, {x:VW*0.80, y:132} ];
   bananas = []; coconuts = []; particles = []; floatTexts = [];
   game.panUses = game.armed ? 2 : 0;              // pan breaks after 2 whacks
   player.x = 60; player.y = BOSS_STAND; player.vx=0; player.vy=0; player.mode='stand'; player.onGround=true; player.curA=null; player.iframe=60;
@@ -757,12 +756,12 @@ function updateBoss(){
   g.anim += 0.05;
 
   if (b.intro <= 0 && g.hp > 0){
-    // Damage the gorilla by SWINGING into it (not jumping). Big, forgiving
-    // radius around it, and you keep swinging — so a good swing chips it each
-    // pass. Grab a vine, swing in, and keep at it while you dodge its attacks.
+    // Damage the gorilla only by SWINGING on a vine and landing on his HEAD
+    // (the top). Bumping his body or jumping does nothing — swing so the bottom
+    // of your arc comes down on his head. You keep swinging, so a good line
+    // bops him each pass while you dodge his attacks.
     if (g.iframe<=0 && p.mode==='swing'){
-      const spd = Math.hypot(p.vx, p.vy);
-      const hit = spd > 2.2 && Math.hypot(p.x-g.x, p.y-(g.y-50)) < 84;
+      const hit = Math.hypot(p.x-g.x, p.y-(g.y-88)) < 52;   // land on the head
       if (hit){
         const withPan = game.armed && game.panUses > 0;
         g.hp -= withPan ? 2 : 1; g.iframe=22; g.hurt=16; game.shake=12; blip(320,0.09,'square');
@@ -1104,9 +1103,9 @@ function renderBoss(){
   // On-screen D-pad.
   drawDpad();
   if(boss.intro>0){ ctx.globalAlpha=clamp(boss.intro/160,0,1); ctx.fillStyle='#fff'; ctx.font='bold 25px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=5; ctx.textAlign='center';
-    const msg = 'SWING into the gorilla!';
+    const msg = 'Swing onto his HEAD!';
     ctx.strokeText(msg,VW/2,VH*0.28); ctx.fillText(msg,VW/2,VH*0.28);
-    ctx.font='bold 15px system-ui'; const sub = game.armed ? 'Pan hits do double — it breaks after 2' : (boss.helpers.length ? ('Your '+boss.helpers.length+' monkey pals are helping!') : 'Only fast swings hurt it!');
+    ctx.font='bold 15px system-ui'; const sub = game.armed ? 'Pan hits do double — it breaks after 2' : (boss.helpers.length ? ('Your '+boss.helpers.length+' monkey pals are helping!') : 'Only landing on his head hurts him!');
     ctx.fillText(sub,VW/2,VH*0.28+26);
     ctx.font='bold 14px system-ui'; ctx.fillText('tap a vine to grab   ◀ ▶ walk   ⤒ jump',VW/2,VH*0.28+50); ctx.globalAlpha=1; }
 }
@@ -1302,6 +1301,7 @@ document.getElementById('nameinput').addEventListener('keydown', e => { if (e.ke
 if (!getName()) openNick();   // ask once on first ever launch
 
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+
 
 
 

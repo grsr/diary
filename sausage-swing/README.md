@@ -76,11 +76,11 @@ also picks a randomized height "shape" so the treetops climb, dip, or zig-zag.
   into the ravine you float back up instead of dying. Great for a tricky bit.
 - **Gorilla boss** (every 3rd level): rolling barrels + coconut rain, and it
   gets tougher (more HP, faster/heavier attacks) each boss. You can't slip
-  behind it, and you can only hurt it by **swinging into it** (walking/jumping
-  does nothing) — grab a vine, swing in, and keep chipping while you dodge. The
-  frying pan makes swing-hits do double damage but **breaks after 2**, and each
-  monkey helper lobs **one** banana then scurries off. Dying re-fights only the
-  boss and **keeps the damage you've done**, so you can wear it down.
+  behind it, and you can only hurt it by **swinging on a vine and landing on his
+  head** (walking or jumping does nothing) — grab a vine, swing so the bottom of
+  your arc comes down on his head, and keep at it while you dodge. The frying pan
+  makes head-hits do double damage but **breaks after 2**, and each monkey helper
+  lobs **one** banana then scurries off. If you die, his health bar resets.
 
 ## Difficulty
 
