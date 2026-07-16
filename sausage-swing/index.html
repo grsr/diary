@@ -97,7 +97,7 @@ const SHAKE_BOOST = 2.4;   // tangential speed added per shake/pump
 const SHAKE_THRESH= 7;     // lower = easier to trigger a shake
 const HELPER_CAP  = 6;
 const START_LIVES = 5;
-const GAME_VERSION = 'v12';   // shown on the menu; bump with each release
+const GAME_VERSION = 'v13';   // shown on the menu; bump with each release
 const WALK        = 3.8;   // boss: walk speed (on-screen buttons)
 const JUMP_V      = 11.5;  // boss: jump strength
 const BG          = 0.6;   // boss: gravity (snappy platforming)
@@ -110,8 +110,10 @@ const game = {
   coins: 0,                       // mini-sausages banked this run
   camX: 0, shake: 0, t: 0, timer: 0,
   armed: false, panUses: 0, panMsg: 0, arena: false, hint: 0, diedInBoss: false, newIdx: -1, viewBoard: false, paused: false,
+  rank: null, party: (localStorage.getItem('sausageParty')==='on'), eggTaps: 0, partyMsg: 0,
 };
-const LBBTN = { x:34, y:VH-48, r:26 };   // in-play "view leaderboard" button (bottom-left)
+const LBBTN = { x:34, y:VH-48, r:26 };     // in-play "view leaderboard" button (bottom-left)
+const MUTEBTN = { x:VW-34, y:VH-48, r:24 }; // music mute toggle (bottom-right, menu + play)
 
 let player, anchors, trees, monkeys, bananas, particles, clouds, pan, level,
     coins, birds, coconuts, spikes, bees, powerups, boss, floatTexts;
@@ -141,6 +143,15 @@ function submitScore(name, score){
       headers: Object.assign(supaHeaders(), { 'Prefer':'return=minimal' }),
       body: JSON.stringify({ name: String(name||'YOU').slice(0,12), score }) }, 6000)
     .then(()=>{}).catch(()=>{});
+}
+// Your world rank = (number of scores higher than yours) + 1.
+function fetchRank(score){
+  game.rank = 'loading';
+  if (!SUPA_ON || !(score > 0)){ game.rank = null; return; }
+  fetchWithTimeout(SUPA_URL+'/rest/v1/scores?select=id&score=gt.'+score+'&limit=1',
+      { headers: Object.assign(supaHeaders(), { 'Prefer':'count=exact' }) }, 6000)
+    .then(r => { const cr = r.headers.get('content-range') || ''; const total = parseInt(cr.split('/')[1], 10); game.rank = isNaN(total) ? null : total + 1; })
+    .catch(() => { game.rank = null; });
 }
 
 /* ---------- Saved progress (resume at the level you reached) ---------- */
@@ -198,6 +209,11 @@ function onDown(e){
   pointers.set(e.pointerId, toWorld(e.clientX, e.clientY));
   startAudio(); requestMotion();
   if (game.paused){ game.paused = false; return; }   // any tap resumes
+  // Mute toggle (menu + play).
+  if (game.state === S.MENU || game.state === S.PLAY){
+    const v = toScreen(e.clientX, e.clientY);
+    if (Math.hypot(v.x-MUTEBTN.x, v.y-MUTEBTN.y) <= MUTEBTN.r){ toggleMusic(); return; }
+  }
   if (game.state === S.MENU){ if (game.viewBoard){ game.viewBoard=false; return; } menuTap(e.clientX, e.clientY); return; }
   if (game.state === S.OVER){ startRun(); return; }
   if (game.state === S.BOSS){ bossPress(e.pointerId, e.clientX, e.clientY); return; }
@@ -236,6 +252,7 @@ function bossPress(id, cx, cy){
 function bossJump(){ if (player.onGround){ player.vy = -JUMP_V; player.onGround=false; player.mode='fly'; blip(500,0.05); } }
 function menuTap(cx, cy){
   const v = toScreen(cx, cy);
+  if (v.y > VH*0.27 && v.y < VH*0.44 && Math.abs(v.x-VW/2) < 95){ eggTap(); return; }                    // secret: tap the sausage
   if (v.y > VH*0.95-18 && v.y < VH*0.95+14 && Math.abs(v.x-VW/2) < 160){ openNick(); return; }          // nickname
   if (v.y > VH*0.895-20 && v.y < VH*0.895+20 && Math.abs(v.x-VW/2) < 105){ game.viewBoard=true; fetchBoard(); return; }  // leaderboard
   if (hasSave() && v.y > VH*0.835-20 && v.y < VH*0.835+20 && Math.abs(v.x-VW/2) < 95){ clearProgress(); startRun(); return; }  // new game
@@ -301,7 +318,7 @@ function pump(){
 
 /* ---------- Tiny WebAudio blips ---------- */
 let actx = null;
-function startAudio(){ if (!actx){ try { actx = new (window.AudioContext||window.webkitAudioContext)(); } catch(_){} } if (actx && actx.state === 'suspended') actx.resume(); }
+function startAudio(){ if (!actx){ try { actx = new (window.AudioContext||window.webkitAudioContext)(); } catch(_){} } if (actx && actx.state === 'suspended') actx.resume(); startMusicLoop(); }
 function blip(freq, dur, type){
   if (!actx) return;
   try {
@@ -313,6 +330,42 @@ function blip(freq, dur, type){
     o.stop(now + dur);
   } catch(_){}
 }
+
+/* ---------- Background music (procedural chiptune loop) ---------- */
+let musicOn = localStorage.getItem('sausageMusic') !== 'off';
+let musicTimer = null, musicStep = 0;
+function musicNote(freq, dur, type, vol){
+  if (!actx || !freq) return;
+  try {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.value = freq;
+    const now = actx.currentTime;
+    g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now+0.02); g.gain.exponentialRampToValueAtTime(0.0001, now+dur);
+    o.connect(g); g.connect(actx.destination); o.start(now); o.stop(now+dur+0.03);
+  } catch(_){}
+}
+const NT = { C3:130.81,E3:164.81,F3:174.61,G3:196.0,A3:220.0,
+             C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392.0,A4:440.0,B4:493.88,C5:523.25,D5:587.33,E5:659.25 };
+// 32-step jaunty melody + 16-step bass (0 = rest).
+const MEL  = [NT.C5,0,NT.G4,NT.E4, NT.G4,0,NT.A4,0, NT.C5,0,NT.G4,NT.E4, NT.D4,0,0,0,
+              NT.B4,0,NT.G4,NT.D4, NT.G4,0,NT.A4,NT.B4, NT.C5,NT.B4,NT.A4,NT.G4, NT.E4,0,0,0];
+const BASS = [NT.C3,0,NT.C3,0, NT.F3,0,NT.F3,0, NT.G3,0,NT.G3,0, NT.C3,0,NT.G3,0];
+const BOSSMEL = [NT.E3,0,NT.E3,NT.F3, NT.G3,0,NT.F3,NT.E3, NT.A3,0,NT.G3,NT.F3, NT.E3,0,0,0]; // darker for boss
+function musicTick(){
+  const playing = musicOn && (game.state===S.PLAY || game.state===S.BOSS);
+  if (playing){
+    if (game.state===S.BOSS){
+      const m = BOSSMEL[musicStep % BOSSMEL.length]; if (m) musicNote(m, 0.18, 'sawtooth', 0.03);
+      if (musicStep % 2 === 0) musicNote(BASS[musicStep % BASS.length]||NT.C3, 0.2, 'triangle', 0.04);
+    } else {
+      const m = MEL[musicStep % MEL.length]; if (m) musicNote(m, 0.15, 'square', 0.024);
+      const bn = BASS[musicStep % BASS.length]; if (bn) musicNote(bn, 0.2, 'triangle', 0.032);
+    }
+  }
+  musicStep++;
+}
+function startMusicLoop(){ if (musicTimer || !actx) return; musicTimer = setInterval(musicTick, 165); }
+function toggleMusic(){ musicOn = !musicOn; try { localStorage.setItem('sausageMusic', musicOn?'on':'off'); } catch(_){} blip(musicOn?660:300, 0.06); }
 
 /* ============================================================================
    LEVEL GENERATION
@@ -429,7 +482,7 @@ function genLevel(n){
 /* ============================================================================
    LIFECYCLE
    ========================================================================== */
-function startRun(){ clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.viewBoard=false; runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
+function startRun(){ clearProgress(); document.getElementById('nameov').style.display='none'; game.newIdx=-1; game.rank=null; game.viewBoard=false; runSeed = (Math.random()*0xFFFFFFFF)>>>0; game.level = 1; game.lives = START_LIVES; game.score = 0; game.coins = 0; loadLevel(1); }
 function continueRun(){ const s = loadProgress(); if (!s){ startRun(); return; } runSeed = (s.seed>>>0) || runSeed; game.level = s.level; game.score = s.score; game.lives = s.lives; game.coins = s.coins; loadLevel(s.level); }
 
 function loadLevel(n){
@@ -463,7 +516,7 @@ function loseLife(reason){
     game.state = S.OVER; game.timer = 0; clearProgress();
     if (game.score > game.best){ game.best = game.score; localStorage.setItem('sausageBest', game.best); }
     recordGameOver();                                   // local table
-    submitScore(getName(), game.score).then(fetchBoard); // online table + refresh
+    submitScore(getName(), game.score).then(()=>{ fetchBoard(); fetchRank(game.score); }); // online + rank
   } else { game.state = S.DYING; game.timer = 40; }
 }
 
@@ -545,6 +598,8 @@ function step(){
   integrate(p);
   // Gusty wind nudges you through the air.
   if (level.wind && p.mode !== 'stand'){ p.vx += level.wind * Math.sin(game.t*0.006) * (p.mode==='swing'?0.4:1); }
+  // Party mode: rainbow trail.
+  if (game.party && p.mode !== 'stand' && game.t%2===0){ particles.push({x:p.x,y:p.y,vx:0,vy:0.3,life:16,col:'hsl('+((game.t*9)%360)+',90%,62%)',r:6}); }
 
   const targetCam = clamp(p.x - VW*0.36, 0, level.len - VW);
   game.camX += (targetCam - game.camX) * 0.12;
@@ -689,6 +744,7 @@ function updateBoss(){
   }
 
   if (p.invuln > 0) p.invuln--;
+  if (game.party && p.mode !== 'stand' && game.t%2===0){ particles.push({x:p.x,y:p.y,vx:0,vy:0.3,life:16,col:'hsl('+((game.t*9)%360)+',90%,62%)',r:6}); }
   if (g.iframe>0) g.iframe--;
   if (g.hurt>0) g.hurt--;
   g.anim += 0.05;
@@ -763,6 +819,23 @@ function updateParticles(){
 function spawnSplat(x,y,col){ for(let i=0;i<16;i++){ const a=Math.random()*6.28,s=1+Math.random()*5; particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:30+Math.random()*20,col,r:2+Math.random()*3}); } }
 function spawnSpark(x,y,col){ const a=Math.random()*6.28,s=1+Math.random()*3; particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,life:24,col,r:2}); }
 function spawnText(x,y,txt,col){ floatTexts.push({x,y,vy:-1.6,life:48,txt,col:col||'#fff'}); }
+
+/* ---------- Easter egg: Party Sausage 🎉 (tap the menu sausage 5×) ---------- */
+let confetti = [];
+function spawnConfetti(){ const cols=['#ff5252','#ffd23f','#57b94f','#4f9fff','#c86bff','#ff9f45'];
+  for(let i=0;i<54;i++) confetti.push({x:VW/2+(Math.random()-0.5)*140, y:VH*0.34, vx:(Math.random()-0.5)*9, vy:-4-Math.random()*8, col:cols[i%cols.length], rot:Math.random()*6.28, vr:(Math.random()-0.5)*0.4, life:110+Math.random()*70}); }
+function drawConfetti(){
+  for(const c of confetti){ c.vy+=0.18; c.x+=c.vx; c.y+=c.vy; c.vx*=0.99; c.rot+=c.vr; c.life--;
+    ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.rot); ctx.globalAlpha=clamp(c.life/40,0,1); ctx.fillStyle=c.col; ctx.fillRect(-4,-3,8,6); ctx.restore(); }
+  ctx.globalAlpha=1; confetti = confetti.filter(c=>c.life>0 && c.y<VH+30);
+}
+function eggTap(){
+  game.eggTaps++; blip(400+Math.min(game.eggTaps,6)*70, 0.05);
+  if (game.eggTaps % 5 === 0){
+    game.party = !game.party; try { localStorage.setItem('sausageParty', game.party?'on':'off'); } catch(_){}
+    spawnConfetti(); game.partyMsg = 130;
+  }
+}
 
 function makeClouds(){ const c=[]; for(let i=0;i<8;i++) c.push({x:Math.random()*3000,y:40+Math.random()*220,s:0.6+Math.random()*0.9,sp:0.1+Math.random()*0.2}); return c; }
 function updateClouds(){ for(const c of clouds){ c.x-=c.sp; if(c.x<-200) c.x+=3400; } }
@@ -920,6 +993,9 @@ function drawFace(x,y,mood){
   else { ctx.moveTo(x-7,y+12); ctx.quadraticCurveTo(x,y+7,x+7,y+12); }
   ctx.stroke();
   ctx.fillStyle='rgba(255,120,90,0.35)'; ctx.beginPath(); ctx.arc(x-11,y+5,3,0,6.29); ctx.arc(x+11,y+5,3,0,6.29); ctx.fill();
+  // Party mode: cool sunglasses.
+  if(game.party){ ctx.fillStyle='#141414'; ctx.beginPath(); ctx.roundRect?ctx.roundRect(x-13,y-4,10,8,2):ctx.rect(x-13,y-4,10,8); ctx.roundRect?ctx.roundRect(x+3,y-4,10,8,2):ctx.rect(x+3,y-4,10,8); ctx.fill();
+    ctx.fillRect(x-3,y-2,6,2); ctx.fillRect(x-16,y-2,3,2); }
 }
 function drawMonkey(mx,my){
   ctx.save(); ctx.translate(mx,my-14+Math.sin(game.t*0.1)*2);
@@ -1085,7 +1161,8 @@ function drawHUD(){
     if(level.boss){ ctx.fillStyle='#3b3b45'; ctx.font='16px system-ui'; ctx.textAlign='right'; ctx.fillText('🦍',VW-14,VH-16); }
     // in-play "view leaderboard" button (bottom-left)
     ctx.fillStyle='rgba(16,30,26,0.4)'; ctx.beginPath(); ctx.arc(LBBTN.x,LBBTN.y,LBBTN.r,0,6.29); ctx.fill();
-    ctx.font='22px system-ui'; ctx.textAlign='center'; ctx.fillText('🏆',LBBTN.x,LBBTN.y+8); }
+    ctx.font='22px system-ui'; ctx.textAlign='center'; ctx.fillText('🏆',LBBTN.x,LBBTN.y+8);
+    drawMuteBtn(); }
   // pan toast
   if(game.panMsg>0){ ctx.globalAlpha=clamp(game.panMsg/40,0,1); ctx.textAlign='center'; ctx.fillStyle='#1e3a2e'; ctx.font='bold 18px system-ui'; ctx.fillText('🍳 Frying pan! Save it for the gorilla',VW/2,VH*0.24); ctx.globalAlpha=1; }
   // level-1 control hint
@@ -1119,12 +1196,23 @@ function drawOverlays(){
     // nickname (tap to change)
     ctx.fillStyle='#cfe0d8'; ctx.font='bold 15px system-ui'; ctx.fillText('👤 '+(getName()||'tap to set your name')+'   ✎', VW/2, VH*0.95);
     ctx.textAlign='right'; ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='12px system-ui'; ctx.fillText(GAME_VERSION, VW-8, VH-8); ctx.textAlign='center';
+    drawMuteBtn();
+    if(game.partyMsg>0){ game.partyMsg--; ctx.fillStyle='#ffd23f'; ctx.font='bold 22px system-ui'; ctx.fillText(game.party?'🎉 PARTY SAUSAGE! 🎉':'party off', VW/2, VH*0.20); }
+    drawConfetti();
   } else if(game.state===S.OVER){
-    panel(); title('GAME OVER',VH*0.13);
+    panel(); title('GAME OVER',VH*0.12);
     ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 22px system-ui';
-    ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'),VW/2,VH*0.205);
-    ctx.fillStyle='#ffd23f'; ctx.font='bold 19px system-ui'; ctx.fillText(SUPA_ON?'🏆 LEADERBOARD':'🏆 HIGH SCORES',VW/2,VH*0.275);
-    drawBoard(VH*0.33, 9);
+    ctx.fillText('You cleared '+game.score+(game.score===1?' level':' levels'),VW/2,VH*0.19);
+    // World rank readout.
+    if(SUPA_ON && game.score>0){
+      let rt;
+      if(game.rank==='loading'||game.rank==null) rt = game.rank==='loading' ? 'Finding your rank…' : '';
+      else if(game.rank===1) rt = '🥇 WORLD #1!!';
+      else rt = "You're world #"+game.rank+'!';
+      if(rt){ ctx.fillStyle= game.rank===1?'#ffd23f':'#8fe0a0'; ctx.font='bold 26px system-ui'; ctx.fillText(rt, VW/2, VH*0.25); }
+    }
+    ctx.fillStyle='#ffd23f'; ctx.font='bold 18px system-ui'; ctx.fillText(SUPA_ON?'🏆 LEADERBOARD':'🏆 HIGH SCORES',VW/2,VH*0.31);
+    drawBoard(VH*0.355, 8);
     cta('TAP TO TRY AGAIN',VH*0.9);
   } else if(game.state===S.CLEAR){
     ctx.fillStyle='#1e5631'; ctx.font='bold 40px system-ui'; ctx.strokeStyle='#fff'; ctx.lineWidth=5;
@@ -1177,6 +1265,10 @@ function drawBoardScreen(){
   ctx.textAlign='center'; ctx.fillStyle='#cfe0d8'; ctx.font='14px system-ui'; ctx.fillText('Top players everywhere', VW/2, VH*0.16);
   drawBoard(VH*0.22, 15);
   ctx.textAlign='center'; ctx.fillStyle='#ffd23f'; ctx.font='bold 16px system-ui'; ctx.fillText(game.paused?'tap to resume':'tap to go back', VW/2, VH*0.95);
+}
+function drawMuteBtn(){
+  ctx.fillStyle='rgba(16,30,26,0.4)'; ctx.beginPath(); ctx.arc(MUTEBTN.x,MUTEBTN.y,MUTEBTN.r,0,6.29); ctx.fill();
+  ctx.font='20px system-ui'; ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.fillText(musicOn?'🔊':'🔇', MUTEBTN.x, MUTEBTN.y+7);
 }
 function panel(){ ctx.fillStyle='rgba(16,30,26,0.74)'; ctx.fillRect(0,0,VW,VH); }
 function title(txt,y){ ctx.fillStyle='#ffd23f'; ctx.font='bold 42px system-ui'; ctx.strokeStyle='#7a3d16'; ctx.lineWidth=6; ctx.lineJoin='round'; ctx.strokeText(txt,VW/2,y); ctx.fillText(txt,VW/2,y); }
