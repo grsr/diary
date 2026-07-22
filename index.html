@@ -437,7 +437,8 @@ a{color:var(--accent2)}
 
       <div class="card">
         <h2>About</h2>
-        <p class="help">Your entries are stored privately on this device only — nothing is sent anywhere, and no account is needed. Use <b>Download backup</b> regularly so you never lose your history (e.g. if you clear Safari data or change phones).</p>
+        <p class="help"><b>A personal tracking aid — not medical advice.</b> Migraine Diary is a simple diary to help you and your doctor spot patterns. It does not diagnose, treat, or give medical advice, and it is not a medical device. Always talk to a qualified healthcare professional about your symptoms, medication, and any changes to treatment.</p>
+        <p class="help"><b>Your data never leaves your device.</b> Everything you enter is stored only in this app on your phone. Nothing is uploaded or stored on any server, there is no account or sign-in, and there is no tracking or analytics — no one else can see your entries. Because it lives only on your device, use <b>Download backup</b> now and then so you don't lose your history (e.g. if you change phones or clear browser data).</p>
         <p class="help" id="countLine"></p>
         <button class="btn danger block" id="wipe" style="margin-top:8px">Delete all data</button>
       </div>
@@ -826,7 +827,8 @@ function buildReportHTML(){
       <th>Date</th><th>Headache</th><th>Sev</th><th>Pattern</th><th>Aura</th><th>Amitript.</th><th>Zopiclone</th>
       <th>Sleep h</th><th>Sleep Q</th><th>Stress</th><th>Triggers</th><th>Water</th><th>Exercise</th>
 <th>Notes</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    </tr></thead><tbody>${rows}</tbody></table>
+    <p style="font-size:10px;color:#666;margin-top:14px">Patient-recorded diary, stored only on the patient's device — not a clinical record and not medical advice. Sleep and medication figures are self-reported.</p>`;
 }
 
 document.querySelectorAll('#rangeChips button').forEach(b=>b.onclick=()=>{
